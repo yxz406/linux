@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Configuration for initramfs
 #
@@ -17,19 +18,27 @@ config INITRAMFS_SOURCE
 	  When multiple directories and files are specified then the
 	  initramfs image will be the aggregate of all of them.
 
-	  See <file:Documentation/early-userspace/README> for more details.
+	  See <file:Documentation/driver-api/early-userspace/early_userspace_support.rst> for more details.
 
 	  If you are not sure, leave it blank.
+
+config INITRAMFS_FORCE
+	bool "Ignore the initramfs passed by the bootloader"
+	depends on CMDLINE_EXTEND || CMDLINE_FORCE
+	help
+	  This option causes the kernel to ignore the initramfs image
+	  (or initrd image) passed to it by the bootloader. This is
+	  analogous to CMDLINE_FORCE, which is found on some architectures,
+	  and is useful if you cannot or don't want to change the image
+	  your bootloader passes to the kernel.
 
 config INITRAMFS_ROOT_UID
 	int "User ID to map to 0 (user root)"
 	depends on INITRAMFS_SOURCE!=""
 	default "0"
 	help
-	  This setting is only meaningful if the INITRAMFS_SOURCE is
-	  contains a directory.  Setting this user ID (UID) to something
-	  other than "0" will cause all files owned by that UID to be
-	  owned by user root in the initial ramdisk image.
+	  If INITRAMFS_SOURCE points to a directory, files owned by this UID
+	  (-1 = current user) will be owned by root in the resulting image.
 
 	  If you are not sure, leave it set to "0".
 
@@ -38,16 +47,13 @@ config INITRAMFS_ROOT_GID
 	depends on INITRAMFS_SOURCE!=""
 	default "0"
 	help
-	  This setting is only meaningful if the INITRAMFS_SOURCE is
-	  contains a directory.  Setting this group ID (GID) to something
-	  other than "0" will cause all files owned by that GID to be
-	  owned by group root in the initial ramdisk image.
+	  If INITRAMFS_SOURCE points to a directory, files owned by this GID
+	  (-1 = current group) will be owned by root in the resulting image.
 
 	  If you are not sure, leave it set to "0".
 
 config RD_GZIP
-	bool "Support initial ramdisks compressed using gzip"
-	depends on BLK_DEV_INITRD
+	bool "Support initial ramdisk/ramfs compressed using gzip"
 	default y
 	select DECOMPRESS_GZIP
 	help
@@ -55,26 +61,23 @@ config RD_GZIP
 	  If unsure, say Y.
 
 config RD_BZIP2
-	bool "Support initial ramdisks compressed using bzip2"
+	bool "Support initial ramdisk/ramfs compressed using bzip2"
 	default y
-	depends on BLK_DEV_INITRD
 	select DECOMPRESS_BZIP2
 	help
 	  Support loading of a bzip2 encoded initial ramdisk or cpio buffer
 	  If unsure, say N.
 
 config RD_LZMA
-	bool "Support initial ramdisks compressed using LZMA"
+	bool "Support initial ramdisk/ramfs compressed using LZMA"
 	default y
-	depends on BLK_DEV_INITRD
 	select DECOMPRESS_LZMA
 	help
 	  Support loading of a LZMA encoded initial ramdisk or cpio buffer
 	  If unsure, say N.
 
 config RD_XZ
-	bool "Support initial ramdisks compressed using XZ"
-	depends on BLK_DEV_INITRD
+	bool "Support initial ramdisk/ramfs compressed using XZ"
 	default y
 	select DECOMPRESS_XZ
 	help
@@ -82,18 +85,16 @@ config RD_XZ
 	  If unsure, say N.
 
 config RD_LZO
-	bool "Support initial ramdisks compressed using LZO"
+	bool "Support initial ramdisk/ramfs compressed using LZO"
 	default y
-	depends on BLK_DEV_INITRD
 	select DECOMPRESS_LZO
 	help
 	  Support loading of a LZO encoded initial ramdisk or cpio buffer
 	  If unsure, say N.
 
 config RD_LZ4
-	bool "Support initial ramdisks compressed using LZ4"
+	bool "Support initial ramdisk/ramfs compressed using LZ4"
 	default y
-	depends on BLK_DEV_INITRD
 	select DECOMPRESS_LZ4
 	help
 	  Support loading of a LZ4 encoded initial ramdisk or cpio buffer
@@ -101,8 +102,7 @@ config RD_LZ4
 
 choice
 	prompt "Built-in initramfs compression mode"
-	depends on INITRAMFS_SOURCE!=""
-	optional
+	depends on INITRAMFS_SOURCE != ""
 	help
 	  This option allows you to decide by which algorithm the builtin
 	  initramfs will be compressed.  Several compression algorithms are
@@ -123,17 +123,6 @@ choice
 	  embedding.
 
 	  If in doubt, select 'None'
-
-config INITRAMFS_COMPRESSION_NONE
-	bool "None"
-	help
-	  Do not compress the built-in initramfs at all. This may sound wasteful
-	  in space, but, you should be aware that the built-in initramfs will be
-	  compressed at a later stage anyways along with the rest of the kernel,
-	  on those architectures that support this. However, not compressing the
-	  initramfs may lead to slightly higher memory consumption during a
-	  short time at boot, while both the cpio image and the unpacked
-	  filesystem image will be present in memory simultaneously
 
 config INITRAMFS_COMPRESSION_GZIP
 	bool "Gzip"
@@ -207,21 +196,15 @@ config INITRAMFS_COMPRESSION_LZ4
 	  If you choose this, keep in mind that most distros don't provide lz4
 	  by default which could cause a build failure.
 
-endchoice
+config INITRAMFS_COMPRESSION_NONE
+	bool "None"
+	help
+	  Do not compress the built-in initramfs at all. This may sound wasteful
+	  in space, but, you should be aware that the built-in initramfs will be
+	  compressed at a later stage anyways along with the rest of the kernel,
+	  on those architectures that support this. However, not compressing the
+	  initramfs may lead to slightly higher memory consumption during a
+	  short time at boot, while both the cpio image and the unpacked
+	  filesystem image will be present in memory simultaneously
 
-config INITRAMFS_COMPRESSION
-	string
-	default ""      if INITRAMFS_COMPRESSION_NONE
-	default ".gz"   if INITRAMFS_COMPRESSION_GZIP
-	default ".bz2"  if INITRAMFS_COMPRESSION_BZIP2
-	default ".lzma" if INITRAMFS_COMPRESSION_LZMA
-	default ".xz"   if INITRAMFS_COMPRESSION_XZ
-	default ".lzo"  if INITRAMFS_COMPRESSION_LZO
-	default ".lz4"  if INITRAMFS_COMPRESSION_LZ4
-	default ".gz"   if RD_GZIP
-	default ".lz4"  if RD_LZ4
-	default ".lzo"  if RD_LZO
-	default ".xz"   if RD_XZ
-	default ".lzma" if RD_LZMA
-	default ".bz2"  if RD_BZIP2
-	default ""
+endchoice

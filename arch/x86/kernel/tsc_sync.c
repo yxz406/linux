@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * check TSC synchronization.
  *
@@ -30,12 +31,30 @@ struct tsc_adjust {
 
 static DEFINE_PER_CPU(struct tsc_adjust, tsc_adjust);
 
+/*
+ * TSC's on different sockets may be reset asynchronously.
+ * This may cause the TSC ADJUST value on socket 0 to be NOT 0.
+ */
+bool __read_mostly tsc_async_resets;
+
+void mark_tsc_async_resets(char *reason)
+{
+	if (tsc_async_resets)
+		return;
+	tsc_async_resets = true;
+	pr_info("tsc: Marking TSC async resets true due to %s\n", reason);
+}
+
 void tsc_verify_tsc_adjust(bool resume)
 {
 	struct tsc_adjust *adj = this_cpu_ptr(&tsc_adjust);
 	s64 curval;
 
 	if (!boot_cpu_has(X86_FEATURE_TSC_ADJUST))
+		return;
+
+	/* Skip unnecessary error messages if TSC already unstable */
+	if (check_tsc_unstable())
 		return;
 
 	/* Rate limit the MSR check */
@@ -72,16 +91,21 @@ static void tsc_sanitize_first_cpu(struct tsc_adjust *cur, s64 bootval,
 	 * hotplug should have set the ADJUST register to a value > 0 so
 	 * the TSC is in sync with the already running cpus.
 	 *
-	 * But we always force positive ADJUST values. Otherwise the TSC
-	 * deadline timer creates an interrupt storm. We also have to
-	 * prevent values > 0x7FFFFFFF as those wreckage the timer as well.
+	 * Also don't force the ADJUST value to zero if that is a valid value
+	 * for socket 0 as determined by the system arch.  This is required
+	 * when multiple sockets are reset asynchronously with each other
+	 * and socket 0 may not have an TSC ADJUST value of 0.
 	 */
-	if ((bootcpu && bootval != 0) || (!bootcpu && bootval < 0) ||
-	    (bootval > 0x7FFFFFFF)) {
-		pr_warn(FW_BUG "TSC ADJUST: CPU%u: %lld force to 0\n", cpu,
-			bootval);
-		wrmsrl(MSR_IA32_TSC_ADJUST, 0);
-		bootval = 0;
+	if (bootcpu && bootval != 0) {
+		if (likely(!tsc_async_resets)) {
+			pr_warn(FW_BUG "TSC ADJUST: CPU%u: %lld force to 0\n",
+				cpu, bootval);
+			wrmsrl(MSR_IA32_TSC_ADJUST, 0);
+			bootval = 0;
+		} else {
+			pr_info("TSC ADJUST: CPU%u: %lld NOT forced to 0\n",
+				cpu, bootval);
+		}
 	}
 	cur->adjusted = bootval;
 }
@@ -93,6 +117,10 @@ bool __init tsc_store_and_check_tsc_adjust(bool bootcpu)
 	s64 bootval;
 
 	if (!boot_cpu_has(X86_FEATURE_TSC_ADJUST))
+		return false;
+
+	/* Skip unnecessary error messages if TSC already unstable */
+	if (check_tsc_unstable())
 		return false;
 
 	rdmsrl(MSR_IA32_TSC_ADJUST, bootval);
@@ -123,6 +151,13 @@ bool tsc_store_and_check_tsc_adjust(bool bootcpu)
 	cur->warned = false;
 
 	/*
+	 * If a non-zero TSC value for socket 0 may be valid then the default
+	 * adjusted value cannot assumed to be zero either.
+	 */
+	if (tsc_async_resets)
+		cur->adjusted = bootval;
+
+	/*
 	 * Check whether this CPU is the first in a package to come up. In
 	 * this case do not check the boot value against another package
 	 * because the new package might have been physically hotplugged,
@@ -143,10 +178,9 @@ bool tsc_store_and_check_tsc_adjust(bool bootcpu)
 	 * Compare the boot value and complain if it differs in the
 	 * package.
 	 */
-	if (bootval != ref->bootval) {
-		pr_warn(FW_BUG "TSC ADJUST differs: Reference CPU%u: %lld CPU%u: %lld\n",
-			refcpu, ref->bootval, cpu, bootval);
-	}
+	if (bootval != ref->bootval)
+		printk_once(FW_BUG "TSC ADJUST differs within socket(s), fixing all errors\n");
+
 	/*
 	 * The TSC_ADJUST values in a package must be the same. If the boot
 	 * value on this newly upcoming CPU differs from the adjustment
@@ -154,8 +188,6 @@ bool tsc_store_and_check_tsc_adjust(bool bootcpu)
 	 * adjusted value.
 	 */
 	if (bootval != ref->adjusted) {
-		pr_warn("TSC ADJUST synchronize: Reference CPU%u: %lld CPU%u: %lld\n",
-			refcpu, ref->adjusted, cpu, bootval);
 		cur->adjusted = ref->adjusted;
 		wrmsrl(MSR_IA32_TSC_ADJUST, ref->adjusted);
 	}
@@ -201,7 +233,6 @@ static cycles_t check_tsc_warp(unsigned int timeout)
 	 * The measurement runs for 'timeout' msecs:
 	 */
 	end = start + (cycles_t) tsc_khz * timeout;
-	now = start;
 
 	for (i = 0; ; i++) {
 		/*
@@ -264,7 +295,7 @@ static cycles_t check_tsc_warp(unsigned int timeout)
  * But as the TSC is per-logical CPU and can potentially be modified wrongly
  * by the bios, TSC sync test for smaller duration should be able
  * to catch such errors. Also this will catch the condition where all the
- * cores in the socket doesn't get reset at the same time.
+ * cores in the socket don't get reset at the same time.
  */
 static inline unsigned int loop_timeout(int cpu)
 {
@@ -285,13 +316,6 @@ void check_tsc_sync_source(int cpu)
 	 */
 	if (unsynchronized_tsc())
 		return;
-
-	if (tsc_clocksource_reliable) {
-		if (cpu == (nr_cpu_ids-1) || system_state != SYSTEM_BOOTING)
-			pr_info(
-			"Skipped synchronization checks as TSC is reliable.\n");
-		return;
-	}
 
 	/*
 	 * Set the maximum number of test runs to
@@ -339,12 +363,12 @@ retry:
 		/* Force it to 0 if random warps brought us here */
 		atomic_set(&test_runs, 0);
 
-		pr_warning("TSC synchronization [CPU#%d -> CPU#%d]:\n",
+		pr_warn("TSC synchronization [CPU#%d -> CPU#%d]:\n",
 			smp_processor_id(), cpu);
-		pr_warning("Measured %Ld cycles TSC warp between CPUs, "
-			   "turning off TSC clock.\n", max_warp);
+		pr_warn("Measured %Ld cycles TSC warp between CPUs, "
+			"turning off TSC clock.\n", max_warp);
 		if (random_warps)
-			pr_warning("TSC warped randomly between CPUs\n");
+			pr_warn("TSC warped randomly between CPUs\n");
 		mark_tsc_unstable("check_tsc_sync_source failed");
 	}
 
@@ -380,14 +404,19 @@ void check_tsc_sync_target(void)
 	int cpus = 2;
 
 	/* Also aborts if there is no TSC. */
-	if (unsynchronized_tsc() || tsc_clocksource_reliable)
+	if (unsynchronized_tsc())
 		return;
 
 	/*
 	 * Store, verify and sanitize the TSC adjust register. If
 	 * successful skip the test.
+	 *
+	 * The test is also skipped when the TSC is marked reliable. This
+	 * is true for SoCs which have no fallback clocksource. On these
+	 * SoCs the TSC is frequency synchronized, but still the TSC ADJUST
+	 * register might have been wreckaged by the BIOS..
 	 */
-	if (tsc_store_and_check_tsc_adjust(false)) {
+	if (tsc_store_and_check_tsc_adjust(false) || tsc_clocksource_reliable) {
 		atomic_inc(&skip_test);
 		return;
 	}
@@ -452,20 +481,6 @@ retry:
 	 * through a 3rd run for fine tuning.
 	 */
 	cur->adjusted += cur_max_warp;
-
-	/*
-	 * TSC deadline timer stops working or creates an interrupt storm
-	 * with adjust values < 0 and > x07ffffff.
-	 *
-	 * To allow adjust values > 0x7FFFFFFF we need to disable the
-	 * deadline timer and use the local APIC timer, but that requires
-	 * more intrusive changes and we do not have any useful information
-	 * from Intel about the underlying HW wreckage yet.
-	 */
-	if (cur->adjusted < 0)
-		cur->adjusted = 0;
-	if (cur->adjusted > 0x7FFFFFFF)
-		cur->adjusted = 0x7FFFFFFF;
 
 	pr_warn("TSC ADJUST compensate: CPU%u observed %lld warp. Adjust: %lld\n",
 		cpu, cur_max_warp, cur->adjusted);

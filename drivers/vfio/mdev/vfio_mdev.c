@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * VFIO based driver for Mediated device
  *
  * Copyright (c) 2016, NVIDIA CORPORATION. All rights reserved.
  *     Author: Neo Jia <cjia@nvidia.com>
  *             Kirti Wankhede <kwankhede@nvidia.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/init.h>
@@ -27,7 +24,7 @@
 static int vfio_mdev_open(void *device_data)
 {
 	struct mdev_device *mdev = device_data;
-	struct parent_device *parent = mdev->parent;
+	struct mdev_parent *parent = mdev->parent;
 	int ret;
 
 	if (unlikely(!parent->ops->open))
@@ -46,7 +43,7 @@ static int vfio_mdev_open(void *device_data)
 static void vfio_mdev_release(void *device_data)
 {
 	struct mdev_device *mdev = device_data;
-	struct parent_device *parent = mdev->parent;
+	struct mdev_parent *parent = mdev->parent;
 
 	if (likely(parent->ops->release))
 		parent->ops->release(mdev);
@@ -58,7 +55,7 @@ static long vfio_mdev_unlocked_ioctl(void *device_data,
 				     unsigned int cmd, unsigned long arg)
 {
 	struct mdev_device *mdev = device_data;
-	struct parent_device *parent = mdev->parent;
+	struct mdev_parent *parent = mdev->parent;
 
 	if (unlikely(!parent->ops->ioctl))
 		return -EINVAL;
@@ -70,7 +67,7 @@ static ssize_t vfio_mdev_read(void *device_data, char __user *buf,
 			      size_t count, loff_t *ppos)
 {
 	struct mdev_device *mdev = device_data;
-	struct parent_device *parent = mdev->parent;
+	struct mdev_parent *parent = mdev->parent;
 
 	if (unlikely(!parent->ops->read))
 		return -EINVAL;
@@ -82,7 +79,7 @@ static ssize_t vfio_mdev_write(void *device_data, const char __user *buf,
 			       size_t count, loff_t *ppos)
 {
 	struct mdev_device *mdev = device_data;
-	struct parent_device *parent = mdev->parent;
+	struct mdev_parent *parent = mdev->parent;
 
 	if (unlikely(!parent->ops->write))
 		return -EINVAL;
@@ -93,7 +90,7 @@ static ssize_t vfio_mdev_write(void *device_data, const char __user *buf,
 static int vfio_mdev_mmap(void *device_data, struct vm_area_struct *vma)
 {
 	struct mdev_device *mdev = device_data;
-	struct parent_device *parent = mdev->parent;
+	struct mdev_parent *parent = mdev->parent;
 
 	if (unlikely(!parent->ops->mmap))
 		return -EINVAL;
@@ -111,19 +108,19 @@ static const struct vfio_device_ops vfio_mdev_dev_ops = {
 	.mmap		= vfio_mdev_mmap,
 };
 
-int vfio_mdev_probe(struct device *dev)
+static int vfio_mdev_probe(struct device *dev)
 {
 	struct mdev_device *mdev = to_mdev_device(dev);
 
 	return vfio_add_group_dev(dev, &vfio_mdev_dev_ops, mdev);
 }
 
-void vfio_mdev_remove(struct device *dev)
+static void vfio_mdev_remove(struct device *dev)
 {
 	vfio_del_group_dev(dev);
 }
 
-struct mdev_driver vfio_mdev_driver = {
+static struct mdev_driver vfio_mdev_driver = {
 	.name	= "vfio_mdev",
 	.probe	= vfio_mdev_probe,
 	.remove	= vfio_mdev_remove,

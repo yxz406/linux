@@ -1055,7 +1055,6 @@ static void vga16fb_copyarea(struct fb_info *info, const struct fb_copyarea *are
 	case FB_TYPE_VGA_PLANES:
 		if (info->fix.type_aux == FB_AUX_VGA_PLANES_VGA4) {
 			width = width/8;
-			height = height;
 			line_ofs = info->fix.line_length - width;
 
 			setmode(1);
@@ -1271,7 +1270,7 @@ static void vga16fb_destroy(struct fb_info *info)
 	framebuffer_release(info);
 }
 
-static struct fb_ops vga16fb_ops = {
+static const struct fb_ops vga16fb_ops = {
 	.owner		= THIS_MODULE,
 	.fb_open        = vga16fb_open,
 	.fb_release     = vga16fb_release,

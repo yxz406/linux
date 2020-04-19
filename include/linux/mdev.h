@@ -1,46 +1,33 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Mediated device definition
  *
  * Copyright (c) 2016, NVIDIA CORPORATION. All rights reserved.
  *     Author: Neo Jia <cjia@nvidia.com>
  *             Kirti Wankhede <kwankhede@nvidia.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef MDEV_H
 #define MDEV_H
 
-/* Parent device */
-struct parent_device {
-	struct device		*dev;
-	const struct parent_ops	*ops;
+struct mdev_device;
 
-	/* internal */
-	struct kref		ref;
-	struct mutex		lock;
-	struct list_head	next;
-	struct kset		*mdev_types_kset;
-	struct list_head	type_list;
-};
+/*
+ * Called by the parent device driver to set the device which represents
+ * this mdev in iommu protection scope. By default, the iommu device is
+ * NULL, that indicates using vendor defined isolation.
+ *
+ * @dev: the mediated device that iommu will isolate.
+ * @iommu_device: a pci device which represents the iommu for @dev.
+ *
+ * Return 0 for success, otherwise negative error value.
+ */
+int mdev_set_iommu_device(struct device *dev, struct device *iommu_device);
 
-/* Mediated device */
-struct mdev_device {
-	struct device		dev;
-	struct parent_device	*parent;
-	uuid_le			uuid;
-	void			*driver_data;
-
-	/* internal */
-	struct kref		ref;
-	struct list_head	next;
-	struct kobject		*type_kobj;
-};
+struct device *mdev_get_iommu_device(struct device *dev);
 
 /**
- * struct parent_ops - Structure to be registered for each parent device to
+ * struct mdev_parent_ops - Structure to be registered for each parent device to
  * register the device to mdev module.
  *
  * @owner:		The module owner.
@@ -86,10 +73,9 @@ struct mdev_device {
  *			@mdev: mediated device structure
  *			@vma: vma structure
  * Parent device that support mediated device should be registered with mdev
- * module with parent_ops structure.
+ * module with mdev_parent_ops structure.
  **/
-
-struct parent_ops {
+struct mdev_parent_ops {
 	struct module   *owner;
 	const struct attribute_group **dev_attr_groups;
 	const struct attribute_group **mdev_attr_groups;
@@ -103,7 +89,7 @@ struct parent_ops {
 			size_t count, loff_t *ppos);
 	ssize_t (*write)(struct mdev_device *mdev, const char __user *buf,
 			 size_t count, loff_t *ppos);
-	ssize_t (*ioctl)(struct mdev_device *mdev, unsigned int cmd,
+	long	(*ioctl)(struct mdev_device *mdev, unsigned int cmd,
 			 unsigned long arg);
 	int	(*mmap)(struct mdev_device *mdev, struct vm_area_struct *vma);
 };
@@ -142,27 +128,21 @@ struct mdev_driver {
 };
 
 #define to_mdev_driver(drv)	container_of(drv, struct mdev_driver, driver)
-#define to_mdev_device(dev)	container_of(dev, struct mdev_device, dev)
 
-static inline void *mdev_get_drvdata(struct mdev_device *mdev)
-{
-	return mdev->driver_data;
-}
-
-static inline void mdev_set_drvdata(struct mdev_device *mdev, void *data)
-{
-	mdev->driver_data = data;
-}
+void *mdev_get_drvdata(struct mdev_device *mdev);
+void mdev_set_drvdata(struct mdev_device *mdev, void *data);
+const guid_t *mdev_uuid(struct mdev_device *mdev);
 
 extern struct bus_type mdev_bus_type;
 
-#define dev_is_mdev(d) ((d)->bus == &mdev_bus_type)
+int mdev_register_device(struct device *dev, const struct mdev_parent_ops *ops);
+void mdev_unregister_device(struct device *dev);
 
-extern int  mdev_register_device(struct device *dev,
-				 const struct parent_ops *ops);
-extern void mdev_unregister_device(struct device *dev);
+int mdev_register_driver(struct mdev_driver *drv, struct module *owner);
+void mdev_unregister_driver(struct mdev_driver *drv);
 
-extern int  mdev_register_driver(struct mdev_driver *drv, struct module *owner);
-extern void mdev_unregister_driver(struct mdev_driver *drv);
+struct device *mdev_parent_dev(struct mdev_device *mdev);
+struct device *mdev_dev(struct mdev_device *mdev);
+struct mdev_device *mdev_from_dev(struct device *dev);
 
 #endif /* MDEV_H */

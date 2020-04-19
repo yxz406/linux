@@ -40,49 +40,17 @@ Enjoy!
 Docs at the Linux Kernel tree
 -----------------------------
 
-The DocBook books should be built with ``make {htmldocs | psdocs | pdfdocs}``.
 The Sphinx books should be built with ``make {htmldocs | pdfdocs | epubdocs}``.
 
     * Name: **linux/Documentation**
 
       :Author: Many.
       :Location: Documentation/
-      :Keywords: text files, Sphinx, DocBook.
+      :Keywords: text files, Sphinx.
       :Description: Documentation that comes with the kernel sources,
         inside the Documentation directory. Some pages from this document
         (including this document itself) have been moved there, and might
         be more up to date than the web version.
-
-    * Title: **The Kernel Hacking HOWTO**
-
-      :Author: Various Talented People, and Rusty.
-      :Location: Documentation/DocBook/kernel-hacking.tmpl
-      :Keywords: HOWTO, kernel contexts, deadlock, locking, modules,
-        symbols, return conventions.
-      :Description: From the Introduction: "Please understand that I
-        never wanted to write this document, being grossly underqualified,
-        but I always wanted to read it, and this was the only way. I
-        simply explain some best practices, and give reading entry-points
-        into the kernel sources. I avoid implementation details: that's
-        what the code is for, and I ignore whole tracts of useful
-        routines. This document assumes familiarity with C, and an
-        understanding of what the kernel is, and how it is used. It was
-        originally written for the 2.3 kernels, but nearly all of it
-        applies to 2.2 too; 2.0 is slightly different".
-
-    * Title: **Linux Kernel Locking HOWTO**
-
-      :Author: Various Talented People, and Rusty.
-      :Location: Documentation/DocBook/kernel-locking.tmpl
-      :Keywords: locks, locking, spinlock, semaphore, atomic, race
-        condition, bottom halves, tasklets, softirqs.
-      :Description: The title says it all: document describing the
-        locking system in the Linux Kernel either in uniprocessor or SMP
-        systems.
-      :Notes: "It was originally written for the later (>2.3.47) 2.3
-        kernels, but most of it applies to 2.2 too; 2.0 is slightly
-        different". Freely redistributable under the conditions of the GNU
-        General Public License.
 
 On-line docs
 ------------
@@ -90,7 +58,7 @@ On-line docs
     * Title: **Linux Kernel Mailing List Glossary**
 
       :Author: various
-      :URL: http://kernelnewbies.org/glossary/
+      :URL: https://kernelnewbies.org/KernelGlossary
       :Date: rolling version
       :Keywords: glossary, terms, linux-kernel.
       :Description: From the introduction: "This glossary is intended as
@@ -126,18 +94,6 @@ On-line docs
       :Abstract:
         [...]. This paper examines some common problems for
         submitting larger changes and some strategies to avoid problems.
-
-    * Title: **Overview of the Virtual File System**
-
-      :Author: Richard Gooch.
-      :URL: http://www.mjmwired.net/kernel/Documentation/filesystems/vfs.txt
-      :Date: 2007
-      :Keywords: VFS, File System, mounting filesystems, opening files,
-        dentries, dcache.
-      :Description: Brief introduction to the Linux Virtual File System.
-        What is it, how it works, operations taken when opening a file or
-        mounting a file system and description of important data
-        structures explaining the purpose of each of their entries.
 
     * Title: **Linux Device Drivers, Third Edition**
 
@@ -357,7 +313,7 @@ On-line docs
       :URL: http://www.linuxjournal.com/article.php?sid=2391
       :Date: 1997
       :Keywords: RAID, MD driver.
-      :Description: Linux Journal Kernel Korner article. Here is its
+      :Description: Linux Journal Kernel Korner article.
       :Abstract: *A description of the implementation of the RAID-1,
         RAID-4 and RAID-5 personalities of the MD device driver in the
         Linux kernel, providing users with high performance and reliable,
@@ -382,7 +338,7 @@ On-line docs
       :Date: 1996
       :Keywords: device driver, module, loading/unloading modules,
         allocating resources.
-      :Description: Linux Journal Kernel Korner article. Here is its
+      :Description: Linux Journal Kernel Korner article.
       :Abstract: *This is the first of a series of four articles
         co-authored by Alessandro Rubini and Georg Zezchwitz which present
         a practical approach to writing Linux device drivers as kernel
@@ -398,7 +354,7 @@ On-line docs
       :Keywords: character driver, init_module, clean_up module,
         autodetection, mayor number, minor number, file operations,
         open(), close().
-      :Description: Linux Journal Kernel Korner article. Here is its
+      :Description: Linux Journal Kernel Korner article.
       :Abstract: *This article, the second of four, introduces part of
         the actual code to create custom module implementing a character
         device driver. It describes the code for module initialization and
@@ -411,7 +367,7 @@ On-line docs
       :Date: 1996
       :Keywords: read(), write(), select(), ioctl(), blocking/non
         blocking mode, interrupt handler.
-      :Description: Linux Journal Kernel Korner article. Here is its
+      :Description: Linux Journal Kernel Korner article.
       :Abstract: *This article, the third of four on writing character
         device drivers, introduces concepts of reading, writing, and using
         ioctl-calls*.
@@ -422,7 +378,7 @@ On-line docs
       :URL: http://www.linuxjournal.com/article.php?sid=1222
       :Date: 1996
       :Keywords: interrupts, irqs, DMA, bottom halves, task queues.
-      :Description: Linux Journal Kernel Korner article. Here is its
+      :Description: Linux Journal Kernel Korner article.
       :Abstract: *This is the fourth in a series of articles about
         writing character device drivers as loadable kernel modules. This
         month, we further investigate the field of interrupt handling.
@@ -597,7 +553,7 @@ Miscellaneous
 
     * Name: **Cross-Referencing Linux**
 
-      :URL: http://lxr.free-electrons.com/
+      :URL: https://elixir.bootlin.com/
       :Keywords: Browsing source code.
       :Description: Another web-based Linux kernel source code browser.
         Lots of cross references to variables and functions. You can see

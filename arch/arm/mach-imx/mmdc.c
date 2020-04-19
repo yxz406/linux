@@ -1,15 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
+ * Copyright 2017 NXP
  * Copyright 2011,2016 Freescale Semiconductor, Inc.
  * Copyright 2011 Linaro Ltd.
- *
- * The code contained herein is licensed under the GNU General Public
- * License. You may obtain a copy of the GNU General Public License
- * Version 2 or later at the following locations:
- *
- * http://www.opensource.org/licenses/gpl-license.html
- * http://www.gnu.org/copyleft/gpl.html
  */
 
+#include <linux/clk.h>
 #include <linux/hrtimer.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -47,6 +43,7 @@
 #define PROFILE_SEL		0x10
 
 #define MMDC_MADPCR0	0x410
+#define MMDC_MADPCR1	0x414
 #define MMDC_MADPSR0	0x418
 #define MMDC_MADPSR1	0x41C
 #define MMDC_MADPSR2	0x420
@@ -57,6 +54,7 @@
 #define MMDC_NUM_COUNTERS	6
 
 #define MMDC_FLAG_PROFILE_SEL	0x1
+#define MMDC_PRF_AXI_ID_CLEAR	0x0
 
 #define to_mmdc_pmu(p) container_of(p, struct mmdc_pmu, pmu)
 
@@ -81,12 +79,13 @@ static const struct of_device_id imx_mmdc_dt_ids[] = {
 
 #ifdef CONFIG_PERF_EVENTS
 
+static enum cpuhp_state cpuhp_mmdc_state;
 static DEFINE_IDA(mmdc_ida);
 
 PMU_EVENT_ATTR_STRING(total-cycles, mmdc_pmu_total_cycles, "event=0x00")
 PMU_EVENT_ATTR_STRING(busy-cycles, mmdc_pmu_busy_cycles, "event=0x01")
 PMU_EVENT_ATTR_STRING(read-accesses, mmdc_pmu_read_accesses, "event=0x02")
-PMU_EVENT_ATTR_STRING(write-accesses, mmdc_pmu_write_accesses, "config=0x03")
+PMU_EVENT_ATTR_STRING(write-accesses, mmdc_pmu_write_accesses, "event=0x03")
 PMU_EVENT_ATTR_STRING(read-bytes, mmdc_pmu_read_bytes, "event=0x04")
 PMU_EVENT_ATTR_STRING(read-bytes.unit, mmdc_pmu_read_bytes_unit, "MB");
 PMU_EVENT_ATTR_STRING(read-bytes.scale, mmdc_pmu_read_bytes_scale, "0.000001");
@@ -160,8 +159,11 @@ static struct attribute_group mmdc_pmu_events_attr_group = {
 };
 
 PMU_FORMAT_ATTR(event, "config:0-63");
+PMU_FORMAT_ATTR(axi_id, "config1:0-63");
+
 static struct attribute *mmdc_pmu_format_attrs[] = {
 	&format_attr_event.attr,
+	&format_attr_axi_id.attr,
 	NULL,
 };
 
@@ -262,7 +264,7 @@ static bool mmdc_pmu_group_is_valid(struct perf_event *event)
 			return false;
 	}
 
-	list_for_each_entry(sibling, &leader->sibling_list, group_entry) {
+	for_each_sibling_event(sibling, leader) {
 		if (!mmdc_pmu_group_event_is_valid(sibling, pmu, &counter_mask))
 			return false;
 	}
@@ -286,13 +288,7 @@ static int mmdc_pmu_event_init(struct perf_event *event)
 		return -EOPNOTSUPP;
 	}
 
-	if (event->attr.exclude_user		||
-			event->attr.exclude_kernel	||
-			event->attr.exclude_hv		||
-			event->attr.exclude_idle	||
-			event->attr.exclude_host	||
-			event->attr.exclude_guest	||
-			event->attr.sample_period)
+	if (event->attr.sample_period)
 		return -EINVAL;
 
 	if (cfg < 0 || cfg >= MMDC_NUM_COUNTERS)
@@ -344,6 +340,14 @@ static void mmdc_pmu_event_start(struct perf_event *event, int flags)
 
 	writel(DBG_RST, reg);
 
+	/*
+	 * Write the AXI id parameter to MADPCR1.
+	 */
+	val = event->attr.config1;
+	reg = mmdc_base + MMDC_MADPCR1;
+	writel(val, reg);
+
+	reg = mmdc_base + MMDC_MADPCR0;
 	val = DBG_EN;
 	if (pmu_mmdc->devtype_data->flags & MMDC_FLAG_PROFILE_SEL)
 		val |= PROFILE_SEL;
@@ -381,6 +385,10 @@ static void mmdc_pmu_event_stop(struct perf_event *event, int flags)
 	reg = mmdc_base + MMDC_MADPCR0;
 
 	writel(PRF_FRZ, reg);
+
+	reg = mmdc_base + MMDC_MADPCR1;
+	writel(MMDC_PRF_AXI_ID_CLEAR, reg);
+
 	mmdc_pmu_event_update(event);
 }
 
@@ -436,6 +444,7 @@ static int mmdc_pmu_init(struct mmdc_pmu *pmu_mmdc,
 			.start          = mmdc_pmu_event_start,
 			.stop           = mmdc_pmu_event_stop,
 			.read           = mmdc_pmu_event_update,
+			.capabilities	= PERF_PMU_CAP_NO_EXCLUDE,
 		},
 		.mmdc_base = mmdc_base,
 		.dev = dev,
@@ -451,8 +460,8 @@ static int imx_mmdc_remove(struct platform_device *pdev)
 {
 	struct mmdc_pmu *pmu_mmdc = platform_get_drvdata(pdev);
 
+	cpuhp_state_remove_instance_nocalls(cpuhp_mmdc_state, &pmu_mmdc->node);
 	perf_pmu_unregister(&pmu_mmdc->pmu);
-	cpuhp_remove_state_nocalls(CPUHP_ONLINE);
 	kfree(pmu_mmdc);
 	return 0;
 }
@@ -472,6 +481,18 @@ static int imx_mmdc_perf_init(struct platform_device *pdev, void __iomem *mmdc_b
 		return -ENOMEM;
 	}
 
+	/* The first instance registers the hotplug state */
+	if (!cpuhp_mmdc_state) {
+		ret = cpuhp_setup_state_multi(CPUHP_AP_ONLINE_DYN,
+					      "perf/arm/mmdc:online", NULL,
+					      mmdc_pmu_offline_cpu);
+		if (ret < 0) {
+			pr_err("cpuhp_setup_state_multi failed\n");
+			goto pmu_free;
+		}
+		cpuhp_mmdc_state = ret;
+	}
+
 	mmdc_num = mmdc_pmu_init(pmu_mmdc, mmdc_base, &pdev->dev);
 	if (mmdc_num == 0)
 		name = "mmdc";
@@ -485,26 +506,23 @@ static int imx_mmdc_perf_init(struct platform_device *pdev, void __iomem *mmdc_b
 			HRTIMER_MODE_REL);
 	pmu_mmdc->hrtimer.function = mmdc_pmu_timer_handler;
 
-	cpuhp_state_add_instance_nocalls(CPUHP_ONLINE,
-					 &pmu_mmdc->node);
-	cpumask_set_cpu(smp_processor_id(), &pmu_mmdc->cpu);
-	ret = cpuhp_setup_state_multi(CPUHP_AP_NOTIFY_ONLINE,
-				      "MMDC_ONLINE", NULL,
-				      mmdc_pmu_offline_cpu);
-	if (ret) {
-		pr_err("cpuhp_setup_state_multi failure\n");
-		goto pmu_register_err;
-	}
+	cpumask_set_cpu(raw_smp_processor_id(), &pmu_mmdc->cpu);
+
+	/* Register the pmu instance for cpu hotplug */
+	cpuhp_state_add_instance_nocalls(cpuhp_mmdc_state, &pmu_mmdc->node);
 
 	ret = perf_pmu_register(&(pmu_mmdc->pmu), name, -1);
-	platform_set_drvdata(pdev, pmu_mmdc);
 	if (ret)
 		goto pmu_register_err;
+
+	platform_set_drvdata(pdev, pmu_mmdc);
 	return 0;
 
 pmu_register_err:
 	pr_warn("MMDC Perf PMU failed (%d), disabled\n", ret);
+	cpuhp_state_remove_instance_nocalls(cpuhp_mmdc_state, &pmu_mmdc->node);
 	hrtimer_cancel(&pmu_mmdc->hrtimer);
+pmu_free:
 	kfree(pmu_mmdc);
 	return ret;
 }
@@ -518,8 +536,20 @@ static int imx_mmdc_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	void __iomem *mmdc_base, *reg;
+	struct clk *mmdc_ipg_clk;
 	u32 val;
-	int timeout = 0x400;
+	int err;
+
+	/* the ipg clock is optional */
+	mmdc_ipg_clk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(mmdc_ipg_clk))
+		mmdc_ipg_clk = NULL;
+
+	err = clk_prepare_enable(mmdc_ipg_clk);
+	if (err) {
+		dev_err(&pdev->dev, "Unable to enable mmdc ipg clock.\n");
+		return err;
+	}
 
 	mmdc_base = of_iomap(np, 0);
 	WARN_ON(!mmdc_base);
@@ -536,16 +566,6 @@ static int imx_mmdc_probe(struct platform_device *pdev)
 	val = readl_relaxed(reg);
 	val &= ~(1 << BP_MMDC_MAPSR_PSD);
 	writel_relaxed(val, reg);
-
-	/* Ensure it's successfully enabled */
-	while (!(readl_relaxed(reg) & 1 << BP_MMDC_MAPSR_PSS) && --timeout)
-		cpu_relax();
-
-	if (unlikely(!timeout)) {
-		pr_warn("%s: failed to enable automatic power saving\n",
-			__func__);
-		return -EBUSY;
-	}
 
 	return imx_mmdc_perf_init(pdev, mmdc_base);
 }

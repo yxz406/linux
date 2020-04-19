@@ -71,6 +71,9 @@ static ssize_t dpaa_eth_show_fqids(struct device *dev,
 		case FQ_TYPE_RX_ERROR:
 			str = "Rx error";
 			break;
+		case FQ_TYPE_RX_PCD:
+			str = "Rx PCD";
+			break;
 		case FQ_TYPE_TX_CONFIRM:
 			str = "Tx default confirmation";
 			break;
@@ -128,11 +131,9 @@ static ssize_t dpaa_eth_show_bpids(struct device *dev,
 {
 	struct dpaa_priv *priv = netdev_priv(to_net_dev(dev));
 	ssize_t bytes = 0;
-	int i = 0;
 
-	for (i = 0; i < DPAA_BPS_NUM; i++)
-		bytes += snprintf(buf + bytes, PAGE_SIZE - bytes, "%u\n",
-				  priv->dpaa_bps[i]->bpid);
+	bytes += snprintf(buf + bytes, PAGE_SIZE - bytes, "%u\n",
+				  priv->dpaa_bp->bpid);
 
 	return bytes;
 }

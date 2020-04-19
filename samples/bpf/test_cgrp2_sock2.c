@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* eBPF example program:
  *
  * - Loads eBPF program
@@ -18,8 +19,9 @@
 #include <fcntl.h>
 #include <net/if.h>
 #include <linux/bpf.h>
+#include <bpf/bpf.h>
 
-#include "libbpf.h"
+#include "bpf_insn.h"
 #include "bpf_load.h"
 
 static int usage(const char *argv0)
@@ -49,13 +51,13 @@ int main(int argc, char **argv)
 	if (argc > 3)
 		filter_id = atoi(argv[3]);
 
-	if (filter_id > prog_cnt) {
+	if (filter_id >= prog_cnt) {
 		printf("Invalid program id; program not found in file\n");
 		return EXIT_FAILURE;
 	}
 
 	ret = bpf_prog_attach(prog_fd[filter_id], cg_fd,
-			      BPF_CGROUP_INET_SOCK_CREATE);
+			      BPF_CGROUP_INET_SOCK_CREATE, 0);
 	if (ret < 0) {
 		printf("Failed to attach prog to cgroup: '%s'\n",
 		       strerror(errno));

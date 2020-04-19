@@ -1,22 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /**
- * macb_pci.c - Cadence GEM PCI wrapper.
+ * Cadence GEM PCI wrapper.
  *
  * Copyright (C) 2016 Cadence Design Systems - http://www.cadence.com
  *
  * Authors: Rafal Ozieblo <rafalo@cadence.com>
  *	    Bartosz Folta <bfolta@cadence.com>
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2  of
- * the License as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/clk.h>
@@ -45,32 +34,27 @@ static int macb_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct macb_platform_data plat_data;
 	struct resource res[2];
 
-	/* sanity check */
-	if (!id)
-		return -EINVAL;
-
 	/* enable pci device */
-	err = pci_enable_device(pdev);
+	err = pcim_enable_device(pdev);
 	if (err < 0) {
-		dev_err(&pdev->dev, "Enabling PCI device has failed: 0x%04X",
-			err);
-		return -EACCES;
+		dev_err(&pdev->dev, "Enabling PCI device has failed: %d", err);
+		return err;
 	}
 
 	pci_set_master(pdev);
 
 	/* set up resources */
 	memset(res, 0x00, sizeof(struct resource) * ARRAY_SIZE(res));
-	res[0].start = pdev->resource[0].start;
-	res[0].end = pdev->resource[0].end;
+	res[0].start = pci_resource_start(pdev, 0);
+	res[0].end = pci_resource_end(pdev, 0);
 	res[0].name = PCI_DRIVER_NAME;
 	res[0].flags = IORESOURCE_MEM;
-	res[1].start = pdev->irq;
+	res[1].start = pci_irq_vector(pdev, 0);
 	res[1].name = PCI_DRIVER_NAME;
 	res[1].flags = IORESOURCE_IRQ;
 
-	dev_info(&pdev->dev, "EMAC physical base addr = 0x%p\n",
-		 (void *)(uintptr_t)pci_resource_start(pdev, 0));
+	dev_info(&pdev->dev, "EMAC physical base addr: %pa\n",
+		 &res[0].start);
 
 	/* set up macb platform data */
 	memset(&plat_data, 0, sizeof(plat_data));
@@ -100,7 +84,7 @@ static int macb_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	plat_info.num_res = ARRAY_SIZE(res);
 	plat_info.data = &plat_data;
 	plat_info.size_data = sizeof(plat_data);
-	plat_info.dma_mask = DMA_BIT_MASK(32);
+	plat_info.dma_mask = pdev->dma_mask;
 
 	/* register platform device */
 	plat_dev = platform_device_register_full(&plat_info);
@@ -120,7 +104,6 @@ err_hclk_register:
 	clk_unregister(plat_data.pclk);
 
 err_pclk_register:
-	pci_disable_device(pdev);
 	return err;
 }
 
@@ -130,12 +113,11 @@ static void macb_remove(struct pci_dev *pdev)
 	struct macb_platform_data *plat_data = dev_get_platdata(&plat_dev->dev);
 
 	platform_device_unregister(plat_dev);
-	pci_disable_device(pdev);
 	clk_unregister(plat_data->pclk);
 	clk_unregister(plat_data->hclk);
 }
 
-static struct pci_device_id dev_id_table[] = {
+static const struct pci_device_id dev_id_table[] = {
 	{ PCI_DEVICE(CDNS_VENDOR_ID, CDNS_DEVICE_ID), },
 	{ 0, }
 };

@@ -80,7 +80,7 @@ static unsigned int calculate_min_delta(void)
 		}
 
 		/* Sorted insert of 75th percentile into buf2 */
-		for (k = 0; k < i; ++k) {
+		for (k = 0; k < i && k < ARRAY_SIZE(buf2); ++k) {
 			if (buf1[ARRAY_SIZE(buf1) - 1] < buf2[k]) {
 				l = min_t(unsigned int,
 					  i, ARRAY_SIZE(buf2) - 1);
@@ -252,6 +252,7 @@ unsigned int __weak get_c0_compare_int(void)
 
 int r4k_clockevent_init(void)
 {
+	unsigned long flags = IRQF_PERCPU | IRQF_TIMER | IRQF_SHARED;
 	unsigned int cpu = smp_processor_id();
 	struct clock_event_device *cd;
 	unsigned int irq, min_delta;
@@ -291,7 +292,9 @@ int r4k_clockevent_init(void)
 
 	cp0_timer_irq_installed = 1;
 
-	setup_irq(irq, &c0_compare_irqaction);
+	if (request_irq(irq, c0_compare_interrupt, flags, "timer",
+			c0_compare_interrupt))
+		pr_err("Failed to request irq %d (timer)\n", irq);
 
 	return 0;
 }

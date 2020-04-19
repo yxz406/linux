@@ -216,7 +216,7 @@ static int smc_open(struct net_device *dev);
 /*
  . Our watchdog timed out. Called by the networking layer
 */
-static void smc_timeout(struct net_device *dev);
+static void smc_timeout(struct net_device *dev, unsigned int txqueue);
 
 /*
  . This is called by the kernel in response to 'ifconfig ethX down'.  It
@@ -1094,7 +1094,7 @@ static int smc_open(struct net_device *dev)
  .--------------------------------------------------------
 */
 
-static void smc_timeout(struct net_device *dev)
+static void smc_timeout(struct net_device *dev, unsigned int txqueue)
 {
 	/* If we get here, some higher level has decided we are broken.
 	   There should really be a "kick me" function call instead. */
@@ -1501,8 +1501,8 @@ static void smc_set_multicast_list(struct net_device *dev)
 static struct net_device *devSMC9194;
 MODULE_LICENSE("GPL");
 
-module_param(io, int, 0);
-module_param(irq, int, 0);
+module_param_hw(io, int, ioport, 0);
+module_param_hw(irq, int, irq, 0);
 module_param(ifport, int, 0);
 MODULE_PARM_DESC(io, "SMC 99194 I/O base address");
 MODULE_PARM_DESC(irq, "SMC 99194 IRQ number");

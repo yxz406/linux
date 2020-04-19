@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * av7110_hw.c: av7110 low level hardware access and firmware interface
  *
@@ -7,28 +8,12 @@
  * originally based on code by:
  * Copyright (C) 1998,1999 Christian Theiss <mistert@rz.fh-augsburg.de>
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
- * Or, point your browser to http://www.gnu.org/copyleft/gpl.html
- *
  * the project's page is at https://linuxtv.org
  */
 
 /* for debugging ARM communication: */
 //#define COM_DEBUG
 
-#include <stdarg.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -56,11 +41,11 @@
    by Nathan Laredo <laredo@gnu.org> */
 
 int av7110_debiwrite(struct av7110 *av7110, u32 config,
-		     int addr, u32 val, int count)
+		     int addr, u32 val, unsigned int count)
 {
 	struct saa7146_dev *dev = av7110->dev;
 
-	if (count <= 0 || count > 32764) {
+	if (count > 32764) {
 		printk("%s: invalid count %d\n", __func__, count);
 		return -1;
 	}
@@ -78,12 +63,12 @@ int av7110_debiwrite(struct av7110 *av7110, u32 config,
 	return 0;
 }
 
-u32 av7110_debiread(struct av7110 *av7110, u32 config, int addr, int count)
+u32 av7110_debiread(struct av7110 *av7110, u32 config, int addr, unsigned int count)
 {
 	struct saa7146_dev *dev = av7110->dev;
 	u32 result = 0;
 
-	if (count > 32764 || count <= 0) {
+	if (count > 32764) {
 		printk("%s: invalid count %d\n", __func__, count);
 		return 0;
 	}

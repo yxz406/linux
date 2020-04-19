@@ -1,4 +1,11 @@
-.. -*- coding: utf-8; mode: rst -*-
+.. Permission is granted to copy, distribute and/or modify this
+.. document under the terms of the GNU Free Documentation License,
+.. Version 1.1 or any later version published by the Free Software
+.. Foundation, with no Invariant Sections, no Front-Cover Texts
+.. and no Back-Cover Texts. A copy of the license is included at
+.. Documentation/media/uapi/fdl-appendix.rst.
+..
+.. TODO: replace it to GFDL-1.1-or-later WITH no-invariant-sections
 
 .. _VIDIOC_DV_TIMINGS_CAP:
 
@@ -29,6 +36,7 @@ Arguments
     File descriptor returned by :ref:`open() <func-open>`.
 
 ``argp``
+    Pointer to struct :c:type:`v4l2_dv_timings_cap`.
 
 
 Description
@@ -97,14 +105,14 @@ that doesn't support them will return an ``EINVAL`` error code.
 
 
 
-.. tabularcolumns:: |p{1.0cm}|p{3.5cm}|p{3.5cm}|p{9.5cm}|
+.. tabularcolumns:: |p{1.0cm}|p{4.0cm}|p{3.5cm}|p{9.2cm}|
 
 .. c:type:: v4l2_dv_timings_cap
 
 .. flat-table:: struct v4l2_dv_timings_cap
     :header-rows:  0
     :stub-columns: 0
-    :widths:       1 1 2 1
+    :widths:       1 1 2
 
     * - __u32
       - ``type``
@@ -119,16 +127,14 @@ that doesn't support them will return an ``EINVAL`` error code.
       - Reserved for future extensions.
 
 	Drivers and applications must set the array to zero.
-    * - union
-      -
-      -
-    * -
-      - struct :c:type:`v4l2_bt_timings_cap`
+    * - union {
+      - (anonymous)
+    * - struct :c:type:`v4l2_bt_timings_cap`
       - ``bt``
       - BT.656/1120 timings capabilities of the hardware.
-    * -
-      - __u32
+    * - __u32
       - ``raw_data``\ [32]
+    * - }
       -
 
 .. tabularcolumns:: |p{7.0cm}|p{10.5cm}|

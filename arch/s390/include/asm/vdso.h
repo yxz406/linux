@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __S390_VDSO_H__
 #define __S390_VDSO_H__
 
@@ -40,12 +41,23 @@ struct vdso_data {
 struct vdso_per_cpu_data {
 	__u64 ectg_timer_base;
 	__u64 ectg_user_time;
-	__u32 cpu_nr;
-	__u32 node_id;
+	/*
+	 * Note: node_id and cpu_nr must be at adjacent memory locations.
+	 * VDSO userspace must read both values with a single instruction.
+	 */
+	union {
+		__u64 getcpu_val;
+		struct {
+			__u32 node_id;
+			__u32 cpu_nr;
+		};
+	};
 };
 
 extern struct vdso_data *vdso_data;
+extern struct vdso_data boot_vdso_data;
 
+void vdso_alloc_boot_cpu(struct lowcore *lowcore);
 int vdso_alloc_per_cpu(struct lowcore *lowcore);
 void vdso_free_per_cpu(struct lowcore *lowcore);
 

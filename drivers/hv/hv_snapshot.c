@@ -1,20 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * An implementation of host initiated guest snapshot.
  *
- *
  * Copyright (C) 2013, Microsoft, Inc.
  * Author : K. Y. Srinivasan <kys@microsoft.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
- * NON INFRINGEMENT.  See the GNU General Public License for more
- * details.
- *
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
@@ -23,6 +12,7 @@
 #include <linux/connector.h>
 #include <linux/workqueue.h>
 #include <linux/hyperv.h>
+#include <asm/hyperv-tlfs.h>
 
 #include "hyperv_vmbus.h"
 #include "hv_utils_transport.h"
@@ -30,6 +20,16 @@
 #define VSS_MAJOR  5
 #define VSS_MINOR  0
 #define VSS_VERSION    (VSS_MAJOR << 16 | VSS_MINOR)
+
+#define VSS_VER_COUNT 1
+static const int vss_versions[] = {
+	VSS_VERSION
+};
+
+#define FW_VER_COUNT 1
+static const int fw_versions[] = {
+	UTIL_FW_VERSION
+};
 
 /*
  * Timeout values are based on expecations from host
@@ -202,8 +202,6 @@ static void vss_send_op(void)
 	}
 
 	kfree(vss_msg);
-
-	return;
 }
 
 static void vss_handle_request(struct work_struct *dummy)
@@ -293,15 +291,14 @@ void hv_vss_onchannelcallback(void *context)
 	u32 recvlen;
 	u64 requestid;
 	struct hv_vss_msg *vss_msg;
-
+	int vss_srv_version;
 
 	struct icmsg_hdr *icmsghdrp;
-	struct icmsg_negotiate *negop = NULL;
 
 	if (vss_transaction.state > HVUTIL_READY)
 		return;
 
-	vmbus_recvpacket(channel, recv_buffer, PAGE_SIZE * 2, &recvlen,
+	vmbus_recvpacket(channel, recv_buffer, HV_HYP_PAGE_SIZE * 2, &recvlen,
 			 &requestid);
 
 	if (recvlen > 0) {
@@ -309,9 +306,15 @@ void hv_vss_onchannelcallback(void *context)
 			sizeof(struct vmbuspipe_hdr)];
 
 		if (icmsghdrp->icmsgtype == ICMSGTYPE_NEGOTIATE) {
-			vmbus_prep_negotiate_resp(icmsghdrp, negop,
-				 recv_buffer, UTIL_FW_VERSION,
-				 VSS_VERSION);
+			if (vmbus_prep_negotiate_resp(icmsghdrp,
+				 recv_buffer, fw_versions, FW_VER_COUNT,
+				 vss_versions, VSS_VER_COUNT,
+				 NULL, &vss_srv_version)) {
+
+				pr_info("VSS IC version %d.%d\n",
+					vss_srv_version >> 16,
+					vss_srv_version & 0xFFFF);
+			}
 		} else {
 			vss_msg = (struct hv_vss_msg *)&recv_buffer[
 				sizeof(struct vmbuspipe_hdr) +
@@ -376,10 +379,61 @@ hv_vss_init(struct hv_util_service *srv)
 	return 0;
 }
 
+static void hv_vss_cancel_work(void)
+{
+	cancel_delayed_work_sync(&vss_timeout_work);
+	cancel_work_sync(&vss_handle_request_work);
+}
+
+int hv_vss_pre_suspend(void)
+{
+	struct vmbus_channel *channel = vss_transaction.recv_channel;
+	struct hv_vss_msg *vss_msg;
+
+	/*
+	 * Fake a THAW message for the user space daemon in case the daemon
+	 * has frozen the file systems. It doesn't matter if there is already
+	 * a message pending to be delivered to the user space since we force
+	 * vss_transaction.state to be HVUTIL_READY, so the user space daemon's
+	 * write() will fail with EINVAL (see vss_on_msg()), and the daemon
+	 * will reset the device by closing and re-opening it.
+	 */
+	vss_msg = kzalloc(sizeof(*vss_msg), GFP_KERNEL);
+	if (!vss_msg)
+		return -ENOMEM;
+
+	tasklet_disable(&channel->callback_event);
+
+	vss_msg->vss_hdr.operation = VSS_OP_THAW;
+
+	/* Cancel any possible pending work. */
+	hv_vss_cancel_work();
+
+	/* We don't care about the return value. */
+	hvutil_transport_send(hvt, vss_msg, sizeof(*vss_msg), NULL);
+
+	kfree(vss_msg);
+
+	vss_transaction.state = HVUTIL_READY;
+
+	/* tasklet_enable() will be called in hv_vss_pre_resume(). */
+	return 0;
+}
+
+int hv_vss_pre_resume(void)
+{
+	struct vmbus_channel *channel = vss_transaction.recv_channel;
+
+	tasklet_enable(&channel->callback_event);
+
+	return 0;
+}
+
 void hv_vss_deinit(void)
 {
 	vss_transaction.state = HVUTIL_DEVICE_DYING;
-	cancel_delayed_work_sync(&vss_timeout_work);
-	cancel_work_sync(&vss_handle_request_work);
+
+	hv_vss_cancel_work();
+
 	hvutil_transport_destroy(hvt);
 }

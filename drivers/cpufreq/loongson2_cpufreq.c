@@ -23,7 +23,7 @@
 #include <asm/clock.h>
 #include <asm/idle.h>
 
-#include <asm/mach-loongson64/loongson.h>
+#include <asm/mach-loongson2ef/loongson.h>
 
 static uint nowait;
 
@@ -51,18 +51,11 @@ static int loongson2_cpu_freq_notifier(struct notifier_block *nb,
 static int loongson2_cpufreq_target(struct cpufreq_policy *policy,
 				     unsigned int index)
 {
-	unsigned int cpu = policy->cpu;
-	cpumask_t cpus_allowed;
 	unsigned int freq;
-
-	cpus_allowed = current->cpus_allowed;
-	set_cpus_allowed_ptr(current, cpumask_of(cpu));
 
 	freq =
 	    ((cpu_clock_freq / 1000) *
 	     loongson2_clockmod_table[index].driver_data) / 8;
-
-	set_cpus_allowed_ptr(current, &cpus_allowed);
 
 	/* setting the cpu frequency */
 	clk_set_rate(policy->clk, freq * 1000);
@@ -102,7 +95,8 @@ static int loongson2_cpufreq_cpu_init(struct cpufreq_policy *policy)
 	}
 
 	policy->clk = cpuclk;
-	return cpufreq_generic_init(policy, &loongson2_clockmod_table[0], 0);
+	cpufreq_generic_init(policy, &loongson2_clockmod_table[0], 0);
+	return 0;
 }
 
 static int loongson2_cpufreq_exit(struct cpufreq_policy *policy)
@@ -121,7 +115,7 @@ static struct cpufreq_driver loongson2_cpufreq_driver = {
 	.attr = cpufreq_generic_attr,
 };
 
-static struct platform_device_id platform_device_ids[] = {
+static const struct platform_device_id platform_device_ids[] = {
 	{
 		.name = "loongson2_cpufreq",
 	},
@@ -150,9 +144,11 @@ static void loongson2_cpu_wait(void)
 	u32 cpu_freq;
 
 	spin_lock_irqsave(&loongson2_wait_lock, flags);
-	cpu_freq = LOONGSON_CHIPCFG(0);
-	LOONGSON_CHIPCFG(0) &= ~0x7;	/* Put CPU into wait mode */
-	LOONGSON_CHIPCFG(0) = cpu_freq;	/* Restore CPU state */
+	cpu_freq = readl(LOONGSON_CHIPCFG);
+	/* Put CPU into wait mode */
+	writel(readl(LOONGSON_CHIPCFG) & ~0x7, LOONGSON_CHIPCFG);
+	/* Restore CPU state */
+	writel(cpu_freq, LOONGSON_CHIPCFG);
 	spin_unlock_irqrestore(&loongson2_wait_lock, flags);
 	local_irq_enable();
 }

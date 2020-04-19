@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
@@ -6,21 +7,9 @@
 #include <linux/if_arp.h>
 #include <net/rtnetlink.h>
 
-struct pcpu_lstats {
-	u64 packets;
-	u64 bytes;
-	struct u64_stats_sync syncp;
-};
-
 static netdev_tx_t nlmon_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-	int len = skb->len;
-	struct pcpu_lstats *stats = this_cpu_ptr(dev->lstats);
-
-	u64_stats_update_begin(&stats->syncp);
-	stats->bytes += len;
-	stats->packets++;
-	u64_stats_update_end(&stats->syncp);
+	dev_lstats_add(dev, skb->len);
 
 	dev_kfree_skb(skb);
 
@@ -58,36 +47,18 @@ static int nlmon_close(struct net_device *dev)
 	return netlink_remove_tap(&nlmon->nt);
 }
 
-static struct rtnl_link_stats64 *
+static void
 nlmon_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
 {
-	int i;
-	u64 bytes = 0, packets = 0;
+	u64 packets, bytes;
 
-	for_each_possible_cpu(i) {
-		const struct pcpu_lstats *nl_stats;
-		u64 tbytes, tpackets;
-		unsigned int start;
-
-		nl_stats = per_cpu_ptr(dev->lstats, i);
-
-		do {
-			start = u64_stats_fetch_begin_irq(&nl_stats->syncp);
-			tbytes = nl_stats->bytes;
-			tpackets = nl_stats->packets;
-		} while (u64_stats_fetch_retry_irq(&nl_stats->syncp, start));
-
-		packets += tpackets;
-		bytes += tbytes;
-	}
+	dev_lstats_read(dev, &packets, &bytes);
 
 	stats->rx_packets = packets;
 	stats->tx_packets = 0;
 
 	stats->rx_bytes = bytes;
 	stats->tx_bytes = 0;
-
-	return stats;
 }
 
 static u32 always_on(struct net_device *dev)
@@ -115,7 +86,7 @@ static void nlmon_setup(struct net_device *dev)
 
 	dev->netdev_ops	= &nlmon_ops;
 	dev->ethtool_ops = &nlmon_ethtool_ops;
-	dev->destructor	= free_netdev;
+	dev->needs_free_netdev = true;
 
 	dev->features = NETIF_F_SG | NETIF_F_FRAGLIST |
 			NETIF_F_HIGHDMA | NETIF_F_LLTX;
@@ -129,7 +100,8 @@ static void nlmon_setup(struct net_device *dev)
 	dev->min_mtu = sizeof(struct nlmsghdr);
 }
 
-static int nlmon_validate(struct nlattr *tb[], struct nlattr *data[])
+static int nlmon_validate(struct nlattr *tb[], struct nlattr *data[],
+			  struct netlink_ext_ack *extack)
 {
 	if (tb[IFLA_ADDRESS])
 		return -EINVAL;

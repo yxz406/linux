@@ -1,25 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * apple-properties.c - EFI device properties on Macs
  * Copyright (C) 2016 Lukas Wunner <lukas@wunner.de>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License (version 2) as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
+ * Note, all properties are considered as u8 arrays.
+ * To get a value of any of them the caller must use device_property_read_u8_array().
  */
 
 #define pr_fmt(fmt) "apple-properties: " fmt
 
-#include <linux/bootmem.h>
-#include <linux/dmi.h>
+#include <linux/memblock.h>
 #include <linux/efi.h>
+#include <linux/io.h>
+#include <linux/platform_data/x86/apple.h>
 #include <linux/property.h>
 #include <linux/slab.h>
 #include <linux/ucs2_string.h>
@@ -38,7 +31,7 @@ __setup("dump_apple_properties", dump_properties_enable);
 struct dev_header {
 	u32 len;
 	u32 prop_count;
-	struct efi_dev_path path[0];
+	struct efi_dev_path path[];
 	/*
 	 * followed by key/value pairs, each key and value preceded by u32 len,
 	 * len includes itself, value may be empty (in which case its len is 4)
@@ -49,20 +42,19 @@ struct properties_header {
 	u32 len;
 	u32 version;
 	u32 dev_count;
-	struct dev_header dev_header[0];
+	struct dev_header dev_header[];
 };
 
-static u8 one __initdata = 1;
-
 static void __init unmarshal_key_value_pairs(struct dev_header *dev_header,
-					     struct device *dev, void *ptr,
+					     struct device *dev, const void *ptr,
 					     struct property_entry entry[])
 {
 	int i;
 
 	for (i = 0; i < dev_header->prop_count; i++) {
 		int remaining = dev_header->len - (ptr - (void *)dev_header);
-		u32 key_len, val_len;
+		u32 key_len, val_len, entry_len;
+		const u8 *entry_data;
 		char *key;
 
 		if (sizeof(key_len) > remaining)
@@ -94,21 +86,14 @@ static void __init unmarshal_key_value_pairs(struct dev_header *dev_header,
 		ucs2_as_utf8(key, ptr + sizeof(key_len),
 			     key_len - sizeof(key_len));
 
-		entry[i].name = key;
-		entry[i].is_array = true;
-		entry[i].length = val_len - sizeof(val_len);
-		entry[i].pointer.raw_data = ptr + key_len + sizeof(val_len);
-		if (!entry[i].length) {
-			/* driver core doesn't accept empty properties */
-			entry[i].length = 1;
-			entry[i].pointer.raw_data = &one;
-		}
-
+		entry_data = ptr + key_len + sizeof(val_len);
+		entry_len = val_len - sizeof(val_len);
+		entry[i] = PROPERTY_ENTRY_U8_ARRAY_LEN(key, entry_data,
+						       entry_len);
 		if (dump_properties) {
-			dev_info(dev, "property: %s\n", entry[i].name);
+			dev_info(dev, "property: %s\n", key);
 			print_hex_dump(KERN_INFO, pr_fmt(), DUMP_PREFIX_OFFSET,
-				16, 1, entry[i].pointer.raw_data,
-				entry[i].length, true);
+				16, 1, entry_data, entry_len, true);
 		}
 
 		ptr += key_len + val_len;
@@ -132,10 +117,10 @@ static int __init unmarshal_devices(struct properties_header *properties)
 	while (offset + sizeof(struct dev_header) < properties->len) {
 		struct dev_header *dev_header = (void *)properties + offset;
 		struct property_entry *entry = NULL;
+		const struct efi_dev_path *ptr;
 		struct device *dev;
 		size_t len;
 		int ret, i;
-		void *ptr;
 
 		if (offset + dev_header->len > properties->len ||
 		    dev_header->len <= sizeof(*dev_header)) {
@@ -146,10 +131,10 @@ static int __init unmarshal_devices(struct properties_header *properties)
 		ptr = dev_header->path;
 		len = dev_header->len - sizeof(*dev_header);
 
-		dev = efi_get_device_by_path((struct efi_dev_path **)&ptr, &len);
+		dev = efi_get_device_by_path(&ptr, &len);
 		if (IS_ERR(dev)) {
 			pr_err("device path parse error %ld at %#zx:\n",
-			       PTR_ERR(dev), ptr - (void *)dev_header);
+			       PTR_ERR(dev), (void *)ptr - (void *)dev_header);
 			print_hex_dump(KERN_ERR, pr_fmt(), DUMP_PREFIX_OFFSET,
 			       16, 1, dev_header, dev_header->len, true);
 			dev = NULL;
@@ -191,13 +176,12 @@ static int __init map_properties(void)
 	u64 pa_data;
 	int ret;
 
-	if (!dmi_match(DMI_SYS_VENDOR, "Apple Inc.") &&
-	    !dmi_match(DMI_SYS_VENDOR, "Apple Computer, Inc."))
+	if (!x86_apple_machine)
 		return 0;
 
 	pa_data = boot_params.hdr.setup_data;
 	while (pa_data) {
-		data = ioremap(pa_data, sizeof(*data));
+		data = memremap(pa_data, sizeof(*data), MEMREMAP_WB);
 		if (!data) {
 			pr_err("cannot map setup_data header\n");
 			return -ENOMEM;
@@ -205,14 +189,14 @@ static int __init map_properties(void)
 
 		if (data->type != SETUP_APPLE_PROPERTIES) {
 			pa_data = data->next;
-			iounmap(data);
+			memunmap(data);
 			continue;
 		}
 
 		data_len = data->len;
-		iounmap(data);
+		memunmap(data);
 
-		data = ioremap(pa_data, sizeof(*data) + data_len);
+		data = memremap(pa_data, sizeof(*data) + data_len, MEMREMAP_WB);
 		if (!data) {
 			pr_err("cannot map setup_data payload\n");
 			return -ENOMEM;
@@ -237,8 +221,8 @@ static int __init map_properties(void)
 		 * to avoid breaking the chain of ->next pointers.
 		 */
 		data->len = 0;
-		iounmap(data);
-		free_bootmem_late(pa_data + sizeof(*data), data_len);
+		memunmap(data);
+		memblock_free_late(pa_data + sizeof(*data), data_len);
 
 		return ret;
 	}

@@ -1,9 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016 Pablo Neira Ayuso <pablo@netfilter.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -16,7 +13,7 @@
 #include <net/netfilter/nf_tables.h>
 
 struct nft_quota {
-	u64		quota;
+	atomic64_t	quota;
 	unsigned long	flags;
 	atomic64_t	consumed;
 };
@@ -24,7 +21,8 @@ struct nft_quota {
 static inline bool nft_overquota(struct nft_quota *priv,
 				 const struct sk_buff *skb)
 {
-	return atomic64_add_return(skb->len, &priv->consumed) >= priv->quota;
+	return atomic64_add_return(skb->len, &priv->consumed) >=
+	       atomic64_read(&priv->quota);
 }
 
 static inline bool nft_quota_invert(struct nft_quota *priv)
@@ -61,7 +59,7 @@ static void nft_quota_obj_eval(struct nft_object *obj,
 
 	if (overquota &&
 	    !test_and_set_bit(NFT_QUOTA_DEPLETED_BIT, &priv->flags))
-		nft_obj_notify(nft_net(pkt), obj->table, obj, 0, 0,
+		nft_obj_notify(nft_net(pkt), obj->key.table, obj, 0, 0,
 			       NFT_MSG_NEWOBJ, nft_pf(pkt), 0, GFP_ATOMIC);
 }
 
@@ -92,14 +90,15 @@ static int nft_quota_do_init(const struct nlattr * const tb[],
 			return -EOPNOTSUPP;
 	}
 
-	priv->quota = quota;
+	atomic64_set(&priv->quota, quota);
 	priv->flags = flags;
 	atomic64_set(&priv->consumed, consumed);
 
 	return 0;
 }
 
-static int nft_quota_obj_init(const struct nlattr * const tb[],
+static int nft_quota_obj_init(const struct nft_ctx *ctx,
+			      const struct nlattr * const tb[],
 			      struct nft_object *obj)
 {
 	struct nft_quota *priv = nft_obj_data(obj);
@@ -107,33 +106,48 @@ static int nft_quota_obj_init(const struct nlattr * const tb[],
 	return nft_quota_do_init(tb, priv);
 }
 
+static void nft_quota_obj_update(struct nft_object *obj,
+				 struct nft_object *newobj)
+{
+	struct nft_quota *newpriv = nft_obj_data(newobj);
+	struct nft_quota *priv = nft_obj_data(obj);
+	u64 newquota;
+
+	newquota = atomic64_read(&newpriv->quota);
+	atomic64_set(&priv->quota, newquota);
+	priv->flags = newpriv->flags;
+}
+
 static int nft_quota_do_dump(struct sk_buff *skb, struct nft_quota *priv,
 			     bool reset)
 {
+	u64 consumed, consumed_cap, quota;
 	u32 flags = priv->flags;
-	u64 consumed;
-
-	if (reset) {
-		consumed = atomic64_xchg(&priv->consumed, 0);
-		if (test_and_clear_bit(NFT_QUOTA_DEPLETED_BIT, &priv->flags))
-			flags |= NFT_QUOTA_F_DEPLETED;
-	} else {
-		consumed = atomic64_read(&priv->consumed);
-	}
 
 	/* Since we inconditionally increment consumed quota for each packet
 	 * that we see, don't go over the quota boundary in what we send to
 	 * userspace.
 	 */
-	if (consumed > priv->quota)
-		consumed = priv->quota;
+	consumed = atomic64_read(&priv->consumed);
+	quota = atomic64_read(&priv->quota);
+	if (consumed >= quota) {
+		consumed_cap = quota;
+		flags |= NFT_QUOTA_F_DEPLETED;
+	} else {
+		consumed_cap = consumed;
+	}
 
-	if (nla_put_be64(skb, NFTA_QUOTA_BYTES, cpu_to_be64(priv->quota),
+	if (nla_put_be64(skb, NFTA_QUOTA_BYTES, cpu_to_be64(quota),
 			 NFTA_QUOTA_PAD) ||
-	    nla_put_be64(skb, NFTA_QUOTA_CONSUMED, cpu_to_be64(consumed),
+	    nla_put_be64(skb, NFTA_QUOTA_CONSUMED, cpu_to_be64(consumed_cap),
 			 NFTA_QUOTA_PAD) ||
 	    nla_put_be32(skb, NFTA_QUOTA_FLAGS, htonl(flags)))
 		goto nla_put_failure;
+
+	if (reset) {
+		atomic64_sub(consumed, &priv->consumed);
+		clear_bit(NFT_QUOTA_DEPLETED_BIT, &priv->flags);
+	}
 	return 0;
 
 nla_put_failure:
@@ -148,14 +162,21 @@ static int nft_quota_obj_dump(struct sk_buff *skb, struct nft_object *obj,
 	return nft_quota_do_dump(skb, priv, reset);
 }
 
-static struct nft_object_type nft_quota_obj __read_mostly = {
-	.type		= NFT_OBJECT_QUOTA,
+static struct nft_object_type nft_quota_obj_type;
+static const struct nft_object_ops nft_quota_obj_ops = {
+	.type		= &nft_quota_obj_type,
 	.size		= sizeof(struct nft_quota),
-	.maxattr	= NFTA_QUOTA_MAX,
-	.policy		= nft_quota_policy,
 	.init		= nft_quota_obj_init,
 	.eval		= nft_quota_obj_eval,
 	.dump		= nft_quota_obj_dump,
+	.update		= nft_quota_obj_update,
+};
+
+static struct nft_object_type nft_quota_obj_type __read_mostly = {
+	.type		= NFT_OBJECT_QUOTA,
+	.ops		= &nft_quota_obj_ops,
+	.maxattr	= NFTA_QUOTA_MAX,
+	.policy		= nft_quota_policy,
 	.owner		= THIS_MODULE,
 };
 
@@ -206,7 +227,7 @@ static int __init nft_quota_module_init(void)
 {
 	int err;
 
-	err = nft_register_obj(&nft_quota_obj);
+	err = nft_register_obj(&nft_quota_obj_type);
 	if (err < 0)
 		return err;
 
@@ -216,14 +237,14 @@ static int __init nft_quota_module_init(void)
 
 	return 0;
 err1:
-	nft_unregister_obj(&nft_quota_obj);
+	nft_unregister_obj(&nft_quota_obj_type);
 	return err;
 }
 
 static void __exit nft_quota_module_exit(void)
 {
 	nft_unregister_expr(&nft_quota_type);
-	nft_unregister_obj(&nft_quota_obj);
+	nft_unregister_obj(&nft_quota_obj_type);
 }
 
 module_init(nft_quota_module_init);

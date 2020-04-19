@@ -530,7 +530,7 @@ static inline void ariadne_reset(struct net_device *dev)
 	netif_start_queue(dev);
 }
 
-static void ariadne_tx_timeout(struct net_device *dev)
+static void ariadne_tx_timeout(struct net_device *dev, unsigned int txqueue)
 {
 	volatile struct Am79C960 *lance = (struct Am79C960 *)dev->base_addr;
 
@@ -692,7 +692,7 @@ static void ariadne_remove_one(struct zorro_dev *z)
 	free_netdev(dev);
 }
 
-static struct zorro_device_id ariadne_zorro_tbl[] = {
+static const struct zorro_device_id ariadne_zorro_tbl[] = {
 	{ ZORRO_PROD_VILLAGE_TRONIC_ARIADNE },
 	{ 0 }
 };

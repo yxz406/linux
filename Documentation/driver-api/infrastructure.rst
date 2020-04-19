@@ -28,7 +28,7 @@ Device Drivers Base
 .. kernel-doc:: drivers/base/node.c
    :internal:
 
-.. kernel-doc:: drivers/base/firmware_class.c
+.. kernel-doc:: drivers/base/firmware_loader/main.c
    :export:
 
 .. kernel-doc:: drivers/base/transport_class.c
@@ -49,26 +49,8 @@ Device Drivers Base
 Device Drivers DMA Management
 -----------------------------
 
-.. kernel-doc:: drivers/base/dma-coherent.c
+.. kernel-doc:: kernel/dma/mapping.c
    :export:
-
-.. kernel-doc:: drivers/base/dma-mapping.c
-   :export:
-
-Device Drivers Power Management
--------------------------------
-
-.. kernel-doc:: drivers/base/power/main.c
-   :export:
-
-Device Drivers ACPI Support
----------------------------
-
-.. kernel-doc:: drivers/acpi/scan.c
-   :export:
-
-.. kernel-doc:: drivers/acpi/scan.c
-   :internal:
 
 Device drivers PnP support
 --------------------------

@@ -1,10 +1,5 @@
-/* Copyright (C) 2003-2013 Jozsef Kadlecsik <kadlec@blackhole.kfki.hu>
- * Copyright (C) 2013 Smoothwall Ltd. <vytas.dauksa@smoothwall.net>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (C) 2003-2013 Jozsef Kadlecsik <kadlec@netfilter.org> */
 
 /* Kernel module implementing an IP set type: the hash:ip,mark type */
 
@@ -47,7 +42,7 @@ struct hash_ipmark4_elem {
 
 /* Common functions */
 
-static inline bool
+static bool
 hash_ipmark4_data_equal(const struct hash_ipmark4_elem *ip1,
 			const struct hash_ipmark4_elem *ip2,
 			u32 *multi)
@@ -69,7 +64,7 @@ nla_put_failure:
 	return true;
 }
 
-static inline void
+static void
 hash_ipmark4_data_next(struct hash_ipmark4_elem *next,
 		       const struct hash_ipmark4_elem *d)
 {
@@ -149,7 +144,7 @@ hash_ipmark4_uadt(struct ip_set *set, struct nlattr *tb[],
 
 	if (retried)
 		ip = ntohl(h->next.ip);
-	for (; !before(ip_to, ip); ip++) {
+	for (; ip <= ip_to; ip++) {
 		e.ip = htonl(ip);
 		ret = adtfn(set, &e, &ext, &ext, flags);
 
@@ -170,7 +165,7 @@ struct hash_ipmark6_elem {
 
 /* Common functions */
 
-static inline bool
+static bool
 hash_ipmark6_data_equal(const struct hash_ipmark6_elem *ip1,
 			const struct hash_ipmark6_elem *ip2,
 			u32 *multi)
@@ -192,7 +187,7 @@ nla_put_failure:
 	return true;
 }
 
-static inline void
+static void
 hash_ipmark6_data_next(struct hash_ipmark6_elem *next,
 		       const struct hash_ipmark6_elem *d)
 {

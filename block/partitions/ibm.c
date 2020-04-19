@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Author(s)......: Holger Smolinski <Holger.Smolinski@de.ibm.com>
  *                  Volker Sameske <sameske@de.ibm.com>
@@ -14,7 +15,6 @@
 #include <asm/vtoc.h>
 
 #include "check.h"
-#include "ibm.h"
 
 
 union label_t {

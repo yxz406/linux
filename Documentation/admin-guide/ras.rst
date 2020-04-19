@@ -8,7 +8,7 @@ RAS concepts
 ************
 
 Reliability, Availability and Serviceability (RAS) is a concept used on
-servers meant to measure their robusteness.
+servers meant to measure their robustness.
 
 Reliability
   is the probability that a system will produce correct outputs.
@@ -42,19 +42,19 @@ Among the monitoring measures, the most usual ones include:
 
 * CPU – detect errors at instruction execution and at L1/L2/L3 caches;
 * Memory – add error correction logic (ECC) to detect and correct errors;
-* I/O – add CRC checksums for tranfered data;
+* I/O – add CRC checksums for transferred data;
 * Storage – RAID, journal file systems, checksums,
   Self-Monitoring, Analysis and Reporting Technology (SMART).
 
 By monitoring the number of occurrences of error detections, it is possible
 to identify if the probability of hardware errors is increasing, and, on such
-case, do a preventive maintainance to replace a degrated component while
+case, do a preventive maintenance to replace a degraded component while
 those errors are correctable.
 
 Types of errors
 ---------------
 
-Most mechanisms used on modern systems use use technologies like Hamming
+Most mechanisms used on modern systems use technologies like Hamming
 Codes that allow error correction when the number of errors on a bit packet
 is below a threshold. If the number of errors is above, those mechanisms
 can indicate with a high degree of confidence that an error happened, but
@@ -81,7 +81,7 @@ That defines some categories of errors:
   still run, eventually replacing the affected hardware by a hot spare,
   if available.
 
-  Also, when an error happens on an userspace process, it is also possible to
+  Also, when an error happens on a userspace process, it is also possible to
   kill such process and let userspace restart it.
 
 The mechanism for handling non-fatal errors is usually complex and may
@@ -121,7 +121,7 @@ using the ``dmidecode`` tool. For example, on a desktop machine, it shows::
 On the above example, a DDR4 SO-DIMM memory module is located at the
 system's memory labeled as "BANK 0", as given by the *bank locator* field.
 Please notice that, on such system, the *total width* is equal to the
-*data witdh*. It means that such memory module doesn't have error
+*data width*. It means that such memory module doesn't have error
 detection/correction mechanisms.
 
 Unfortunately, not all systems use the same field to specify the memory
@@ -145,7 +145,7 @@ bank. On this example, from an older server, ``dmidecode`` shows::
 
 There, the DDR3 RDIMM memory module is located at the system's memory labeled
 as "DIMM_A1", as given by the *locator* field. Please notice that this
-memory module has 64 bits of *data witdh* and 72 bits of *total width*. So,
+memory module has 64 bits of *data width* and 72 bits of *total width*. So,
 it has 8 extra bits to be used by error detection and correction mechanisms.
 Such kind of memory is called Error-correcting code memory (ECC memory).
 
@@ -186,7 +186,7 @@ Architecture (MCA)\ [#f3]_.
 .. [#f1] Please notice that several memory controllers allow operation on a
   mode called "Lock-Step", where it groups two memory modules together,
   doing 128-bit reads/writes. That gives 16 bits for error correction, with
-  significatively improves the error correction mechanism, at the expense
+  significantly improves the error correction mechanism, at the expense
   that, when an error happens, there's no way to know what memory module is
   to blame. So, it has to blame both memory modules.
 
@@ -199,7 +199,7 @@ Architecture (MCA)\ [#f3]_.
   mode).
 
 .. [#f3] For more details about the Machine Check Architecture (MCA),
-  please read Documentation/x86/x86_64/machinecheck at the Kernel tree.
+  please read Documentation/x86/x86_64/machinecheck.rst at the Kernel tree.
 
 EDAC - Error Detection And Correction
 *************************************
@@ -330,9 +330,12 @@ There can be multiple csrows and multiple channels.
 
 .. [#f4] Nowadays, the term DIMM (Dual In-line Memory Module) is widely
   used to refer to a memory module, although there are other memory
-  packaging alternatives, like SO-DIMM, SIMM, etc. Along this document,
-  and inside the EDAC system, the term "dimm" is used for all memory
-  modules, even when they use a different kind of packaging.
+  packaging alternatives, like SO-DIMM, SIMM, etc. The UEFI
+  specification (Version 2.7) defines a memory module in the Common
+  Platform Error Record (CPER) section to be an SMBIOS Memory Device
+  (Type 17). Along this document, and inside the EDAC subsystem, the term
+  "dimm" is used for all memory modules, even when they use a
+  different kind of packaging.
 
 Memory controllers allow for several csrows, with 8 csrows being a
 typical value. Yet, the actual number of csrows depends on the layout of
@@ -344,17 +347,19 @@ for more than 2 channels, like Fully Buffered DIMMs (FB-DIMMs) memory
 controllers. The following example will assume 2 channels:
 
 	+------------+-----------------------+
-	| Chip       |       Channels        |
-	| Select     +-----------+-----------+
-	| rows       |  ``ch0``  |  ``ch1``  |
+	| CS Rows    |       Channels        |
+	+------------+-----------+-----------+
+	|            |  ``ch0``  |  ``ch1``  |
 	+============+===========+===========+
 	| ``csrow0`` |  DIMM_A0  |  DIMM_B0  |
-	+------------+           |           |
-	| ``csrow1`` |           |           |
+	|            |   rank0   |   rank0   |
+	+------------+     -     |     -     |
+	| ``csrow1`` |   rank1   |   rank1   |
 	+------------+-----------+-----------+
 	| ``csrow2`` |  DIMM_A1  | DIMM_B1   |
-	+------------+           |           |
-	| ``csrow3`` |           |           |
+	|            |   rank0   |   rank0   |
+	+------------+     -     |     -     |
+	| ``csrow3`` |   rank1   |   rank1   |
 	+------------+-----------+-----------+
 
 In the above example, there are 4 physical slots on the motherboard
@@ -374,11 +379,13 @@ which the memory DIMM is placed. Thus, when 1 DIMM is placed in each
 Channel, the csrows cross both DIMMs.
 
 Memory DIMMs come single or dual "ranked". A rank is a populated csrow.
-Thus, 2 single ranked DIMMs, placed in slots DIMM_A0 and DIMM_B0 above
-will have just one csrow (csrow0). csrow1 will be empty. On the other
-hand, when 2 dual ranked DIMMs are similarly placed, then both csrow0
-and csrow1 will be populated. The pattern repeats itself for csrow2 and
-csrow3.
+In the example above 2 dual ranked DIMMs are similarly placed. Thus,
+both csrow0 and csrow1 are populated. On the other hand, when 2 single
+ranked DIMMs are placed in slots DIMM_A0 and DIMM_B0, then they will
+have just one csrow (csrow0) and csrow1 will be empty. The pattern
+repeats itself for csrow2 and csrow3. Also note that some memory
+controllers don't have any logic to identify the memory module, see
+``rankX`` directories below.
 
 The representation of the above is reflected in the directory
 tree in EDAC's sysfs interface. Starting in directory
@@ -438,11 +445,13 @@ A typical EDAC system has the following structure under
 	│   │   ├── ce_count
 	│   │   ├── ce_noinfo_count
 	│   │   ├── dimm0
+	│   │   │   ├── dimm_ce_count
 	│   │   │   ├── dimm_dev_type
 	│   │   │   ├── dimm_edac_mode
 	│   │   │   ├── dimm_label
 	│   │   │   ├── dimm_location
 	│   │   │   ├── dimm_mem_type
+	│   │   │   ├── dimm_ue_count
 	│   │   │   ├── size
 	│   │   │   └── uevent
 	│   │   ├── max_location
@@ -457,11 +466,13 @@ A typical EDAC system has the following structure under
 	│   │   ├── ce_count
 	│   │   ├── ce_noinfo_count
 	│   │   ├── dimm0
+	│   │   │   ├── dimm_ce_count
 	│   │   │   ├── dimm_dev_type
 	│   │   │   ├── dimm_edac_mode
 	│   │   │   ├── dimm_label
 	│   │   │   ├── dimm_location
 	│   │   │   ├── dimm_mem_type
+	│   │   │   ├── dimm_ue_count
 	│   │   │   ├── size
 	│   │   │   └── uevent
 	│   │   ├── max_location
@@ -482,6 +493,22 @@ this ``X`` memory module:
 
 	This attribute file displays, in count of megabytes, the memory
 	that this csrow contains.
+
+- ``dimm_ue_count`` - Uncorrectable Errors count attribute file
+
+	This attribute file displays the total count of uncorrectable
+	errors that have occurred on this DIMM. If panic_on_ue is set
+	this counter will not have a chance to increment, since EDAC
+	will panic the system.
+
+- ``dimm_ce_count`` - Correctable Errors count attribute file
+
+	This attribute file displays the total count of correctable
+	errors that have occurred on this DIMM. This count is very
+	important to examine. CEs provide early indications that a
+	DIMM is beginning to fail. This count field should be
+	monitored for non-zero values and report such information
+	to the system administrator.
 
 - ``dimm_dev_type``  - Device type attribute file
 
@@ -678,7 +705,7 @@ information indicating that errors have been detected::
 The structure of the message is:
 
 	+---------------------------------------+-------------+
-	| Content                               + Example     |
+	| Content                               | Example     |
 	+=======================================+=============+
 	| The memory controller                 | MC0         |
 	+---------------------------------------+-------------+
@@ -693,7 +720,7 @@ The structure of the message is:
 	+---------------------------------------+-------------+
 	| The error syndrome                    | 0xb741      |
 	+---------------------------------------+-------------+
-	| Memory row                            | row 0       +
+	| Memory row                            | row 0       |
 	+---------------------------------------+-------------+
 	| Memory channel                        | channel 1   |
 	+---------------------------------------+-------------+

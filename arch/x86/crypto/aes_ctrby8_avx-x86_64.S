@@ -65,7 +65,6 @@
 #include <linux/linkage.h>
 #include <asm/inst.h>
 
-#define CONCAT(a,b)	a##b
 #define VMOVDQ		vmovdqu
 
 #define xdata0		%xmm0
@@ -92,8 +91,6 @@
 #define num_bytes	%r8
 
 #define tmp		%r10
-#define	DDQ(i)		CONCAT(ddq_add_,i)
-#define	XMM(i)		CONCAT(%xmm, i)
 #define	DDQ_DATA	0
 #define	XDATA		1
 #define KEY_128		1
@@ -131,12 +128,12 @@ ddq_add_8:
 /* generate a unique variable for ddq_add_x */
 
 .macro setddq n
-	var_ddq_add = DDQ(\n)
+	var_ddq_add = ddq_add_\n
 .endm
 
 /* generate a unique variable for xmm register */
 .macro setxdata n
-	var_xdata = XMM(\n)
+	var_xdata = %xmm\n
 .endm
 
 /* club the numeric 'id' to the symbol 'name' */
@@ -547,11 +544,11 @@ ddq_add_8:
  * aes_ctr_enc_128_avx_by8(void *in, void *iv, void *keys, void *out,
  *			unsigned int num_bytes)
  */
-ENTRY(aes_ctr_enc_128_avx_by8)
+SYM_FUNC_START(aes_ctr_enc_128_avx_by8)
 	/* call the aes main loop */
 	do_aes_ctrmain KEY_128
 
-ENDPROC(aes_ctr_enc_128_avx_by8)
+SYM_FUNC_END(aes_ctr_enc_128_avx_by8)
 
 /*
  * routine to do AES192 CTR enc/decrypt "by8"
@@ -560,11 +557,11 @@ ENDPROC(aes_ctr_enc_128_avx_by8)
  * aes_ctr_enc_192_avx_by8(void *in, void *iv, void *keys, void *out,
  *			unsigned int num_bytes)
  */
-ENTRY(aes_ctr_enc_192_avx_by8)
+SYM_FUNC_START(aes_ctr_enc_192_avx_by8)
 	/* call the aes main loop */
 	do_aes_ctrmain KEY_192
 
-ENDPROC(aes_ctr_enc_192_avx_by8)
+SYM_FUNC_END(aes_ctr_enc_192_avx_by8)
 
 /*
  * routine to do AES256 CTR enc/decrypt "by8"
@@ -573,8 +570,8 @@ ENDPROC(aes_ctr_enc_192_avx_by8)
  * aes_ctr_enc_256_avx_by8(void *in, void *iv, void *keys, void *out,
  *			unsigned int num_bytes)
  */
-ENTRY(aes_ctr_enc_256_avx_by8)
+SYM_FUNC_START(aes_ctr_enc_256_avx_by8)
 	/* call the aes main loop */
 	do_aes_ctrmain KEY_256
 
-ENDPROC(aes_ctr_enc_256_avx_by8)
+SYM_FUNC_END(aes_ctr_enc_256_avx_by8)

@@ -27,6 +27,8 @@
 #ifndef __NOUVEAU_CRTC_H__
 #define __NOUVEAU_CRTC_H__
 
+#include <drm/drm_crtc.h>
+
 #include <nvif/notify.h>
 
 struct nouveau_crtc {
@@ -60,10 +62,6 @@ struct nouveau_crtc {
 	} cursor;
 
 	struct {
-		struct nouveau_bo *nvbo;
-		uint16_t r[256];
-		uint16_t g[256];
-		uint16_t b[256];
 		int depth;
 	} lut;
 

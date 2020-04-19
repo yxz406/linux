@@ -1,4 +1,11 @@
-.. -*- coding: utf-8; mode: rst -*-
+.. Permission is granted to copy, distribute and/or modify this
+.. document under the terms of the GNU Free Documentation License,
+.. Version 1.1 or any later version published by the Free Software
+.. Foundation, with no Invariant Sections, no Front-Cover Texts
+.. and no Back-Cover Texts. A copy of the license is included at
+.. Documentation/media/uapi/fdl-appendix.rst.
+..
+.. TODO: replace it to GFDL-1.1-or-later WITH no-invariant-sections
 
 .. _buffer:
 
@@ -13,7 +20,7 @@ Only pointers to buffers (planes) are exchanged, the data itself is not
 copied. These pointers, together with meta-information like timestamps
 or field parity, are stored in a struct :c:type:`v4l2_buffer`,
 argument to the :ref:`VIDIOC_QUERYBUF`,
-:ref:`VIDIOC_QBUF` and
+:ref:`VIDIOC_QBUF <VIDIOC_QBUF>` and
 :ref:`VIDIOC_DQBUF <VIDIOC_QBUF>` ioctl. In the multi-planar API,
 some plane-specific members of struct :c:type:`v4l2_buffer`,
 such as pointers and sizes for each plane, are stored in struct
@@ -34,23 +41,141 @@ flags are copied from the OUTPUT video buffer to the CAPTURE video
 buffer.
 
 
+Interactions between formats, controls and buffers
+==================================================
+
+V4L2 exposes parameters that influence the buffer size, or the way data is
+laid out in the buffer. Those parameters are exposed through both formats and
+controls. One example of such a control is the ``V4L2_CID_ROTATE`` control
+that modifies the direction in which pixels are stored in the buffer, as well
+as the buffer size when the selected format includes padding at the end of
+lines.
+
+The set of information needed to interpret the content of a buffer (e.g. the
+pixel format, the line stride, the tiling orientation or the rotation) is
+collectively referred to in the rest of this section as the buffer layout.
+
+Controls that can modify the buffer layout shall set the
+``V4L2_CTRL_FLAG_MODIFY_LAYOUT`` flag.
+
+Modifying formats or controls that influence the buffer size or layout require
+the stream to be stopped. Any attempt at such a modification while the stream
+is active shall cause the ioctl setting the format or the control to return
+the ``EBUSY`` error code. In that case drivers shall also set the
+``V4L2_CTRL_FLAG_GRABBED`` flag when calling
+:c:func:`VIDIOC_QUERYCTRL` or :c:func:`VIDIOC_QUERY_EXT_CTRL` for such a
+control while the stream is active.
+
+.. note::
+
+   The :c:func:`VIDIOC_S_SELECTION` ioctl can, depending on the hardware (for
+   instance if the device doesn't include a scaler), modify the format in
+   addition to the selection rectangle. Similarly, the
+   :c:func:`VIDIOC_S_INPUT`, :c:func:`VIDIOC_S_OUTPUT`, :c:func:`VIDIOC_S_STD`
+   and :c:func:`VIDIOC_S_DV_TIMINGS` ioctls can also modify the format and
+   selection rectangles. When those ioctls result in a buffer size or layout
+   change, drivers shall handle that condition as they would handle it in the
+   :c:func:`VIDIOC_S_FMT` ioctl in all cases described in this section.
+
+Controls that only influence the buffer layout can be modified at any time
+when the stream is stopped. As they don't influence the buffer size, no
+special handling is needed to synchronize those controls with buffer
+allocation and the ``V4L2_CTRL_FLAG_GRABBED`` flag is cleared once the
+stream is stopped.
+
+Formats and controls that influence the buffer size interact with buffer
+allocation. The simplest way to handle this is for drivers to always require
+buffers to be reallocated in order to change those formats or controls. In
+that case, to perform such changes, userspace applications shall first stop
+the video stream with the :c:func:`VIDIOC_STREAMOFF` ioctl if it is running
+and free all buffers with the :c:func:`VIDIOC_REQBUFS` ioctl if they are
+allocated. After freeing all buffers the ``V4L2_CTRL_FLAG_GRABBED`` flag
+for controls is cleared. The format or controls can then be modified, and
+buffers shall then be reallocated and the stream restarted. A typical ioctl
+sequence is
+
+ #. VIDIOC_STREAMOFF
+ #. VIDIOC_REQBUFS(0)
+ #. VIDIOC_S_EXT_CTRLS
+ #. VIDIOC_S_FMT
+ #. VIDIOC_REQBUFS(n)
+ #. VIDIOC_QBUF
+ #. VIDIOC_STREAMON
+
+The second :c:func:`VIDIOC_REQBUFS` call will take the new format and control
+value into account to compute the buffer size to allocate. Applications can
+also retrieve the size by calling the :c:func:`VIDIOC_G_FMT` ioctl if needed.
+
+.. note::
+
+   The API doesn't mandate the above order for control (3.) and format (4.)
+   changes. Format and controls can be set in a different order, or even
+   interleaved, depending on the device and use case. For instance some
+   controls might behave differently for different pixel formats, in which
+   case the format might need to be set first.
+
+When reallocation is required, any attempt to modify format or controls that
+influences the buffer size while buffers are allocated shall cause the format
+or control set ioctl to return the ``EBUSY`` error. Any attempt to queue a
+buffer too small for the current format or controls shall cause the
+:c:func:`VIDIOC_QBUF` ioctl to return a ``EINVAL`` error.
+
+Buffer reallocation is an expensive operation. To avoid that cost, drivers can
+(and are encouraged to) allow format or controls that influence the buffer
+size to be changed with buffers allocated. In that case, a typical ioctl
+sequence to modify format and controls is
+
+ #. VIDIOC_STREAMOFF
+ #. VIDIOC_S_EXT_CTRLS
+ #. VIDIOC_S_FMT
+ #. VIDIOC_QBUF
+ #. VIDIOC_STREAMON
+
+For this sequence to operate correctly, queued buffers need to be large enough
+for the new format or controls. Drivers shall return a ``ENOSPC`` error in
+response to format change (:c:func:`VIDIOC_S_FMT`) or control changes
+(:c:func:`VIDIOC_S_CTRL` or :c:func:`VIDIOC_S_EXT_CTRLS`) if buffers too small
+for the new format are currently queued. As a simplification, drivers are
+allowed to return a ``EBUSY`` error from these ioctls if any buffer is
+currently queued, without checking the queued buffers sizes.
+
+Additionally, drivers shall return a ``EINVAL`` error from the
+:c:func:`VIDIOC_QBUF` ioctl if the buffer being queued is too small for the
+current format or controls. Together, these requirements ensure that queued
+buffers will always be large enough for the configured format and controls.
+
+Userspace applications can query the buffer size required for a given format
+and controls by first setting the desired control values and then trying the
+desired format. The :c:func:`VIDIOC_TRY_FMT` ioctl will return the required
+buffer size.
+
+ #. VIDIOC_S_EXT_CTRLS(x)
+ #. VIDIOC_TRY_FMT()
+ #. VIDIOC_S_EXT_CTRLS(y)
+ #. VIDIOC_TRY_FMT()
+
+The :c:func:`VIDIOC_CREATE_BUFS` ioctl can then be used to allocate buffers
+based on the queried sizes (for instance by allocating a set of buffers large
+enough for all the desired formats and controls, or by allocating separate set
+of appropriately sized buffers for each use case).
+
+
 .. c:type:: v4l2_buffer
 
 struct v4l2_buffer
 ==================
 
-.. tabularcolumns:: |p{2.8cm}|p{2.5cm}|p{1.3cm}|p{10.5cm}|
+.. tabularcolumns:: |p{2.8cm}|p{2.5cm}|p{1.6cm}|p{10.2cm}|
 
 .. cssclass:: longtable
 
 .. flat-table:: struct v4l2_buffer
     :header-rows:  0
     :stub-columns: 0
-    :widths:       1 2 1 10
+    :widths:       1 2 10
 
     * - __u32
       - ``index``
-      -
       - Number of the buffer, set by the application except when calling
 	:ref:`VIDIOC_DQBUF <VIDIOC_QBUF>`, then it is set by the
 	driver. This field can range from zero to the number of buffers
@@ -60,14 +185,12 @@ struct v4l2_buffer
 	:ref:`VIDIOC_CREATE_BUFS` minus one.
     * - __u32
       - ``type``
-      -
       - Type of the buffer, same as struct
 	:c:type:`v4l2_format` ``type`` or struct
 	:c:type:`v4l2_requestbuffers` ``type``, set
 	by the application. See :c:type:`v4l2_buf_type`
     * - __u32
       - ``bytesused``
-      -
       - The number of bytes occupied by the data in the buffer. It depends
 	on the negotiated data format and may change with each buffer for
 	compressed variable size data like JPEG images. Drivers must set
@@ -79,18 +202,15 @@ struct v4l2_buffer
 	``planes`` pointer is used instead.
     * - __u32
       - ``flags``
-      -
       - Flags set by the application or driver, see :ref:`buffer-flags`.
     * - __u32
       - ``field``
-      -
       - Indicates the field order of the image in the buffer, see
 	:c:type:`v4l2_field`. This field is not used when the buffer
 	contains VBI data. Drivers must set it when ``type`` refers to a
 	capture stream, applications when it refers to an output stream.
     * - struct timeval
       - ``timestamp``
-      -
       - For capture streams this is time when the first data byte was
 	captured, as returned by the :c:func:`clock_gettime()` function
 	for the relevant clock id; see ``V4L2_BUF_FLAG_TIMESTAMP_*`` in
@@ -103,9 +223,7 @@ struct v4l2_buffer
 	stream.
     * - struct :c:type:`v4l2_timecode`
       - ``timecode``
-      -
-      - When ``type`` is ``V4L2_BUF_TYPE_VIDEO_CAPTURE`` and the
-	``V4L2_BUF_FLAG_TIMECODE`` flag is set in ``flags``, this
+      - When the ``V4L2_BUF_FLAG_TIMECODE`` flag is set in ``flags``, this
 	structure contains a frame timecode. In
 	:c:type:`V4L2_FIELD_ALTERNATE <v4l2_field>` mode the top and
 	bottom field contain the same timecode. Timecodes are intended to
@@ -114,10 +232,9 @@ struct v4l2_buffer
 	independent of the ``timestamp`` and ``sequence`` fields.
     * - __u32
       - ``sequence``
-      -
       - Set by the driver, counting the frames (not fields!) in sequence.
 	This field is set for both input and output devices.
-    * - :cspan:`3`
+    * - :cspan:`2`
 
 	In :c:type:`V4L2_FIELD_ALTERNATE <v4l2_field>` mode the top and
 	bottom field have the same sequence number. The count starts at
@@ -137,13 +254,11 @@ struct v4l2_buffer
 
     * - __u32
       - ``memory``
-      -
       - This field must be set by applications and/or drivers in
 	accordance with the selected I/O method. See :c:type:`v4l2_memory`
-    * - union
+    * - union {
       - ``m``
-    * -
-      - __u32
+    * - __u32
       - ``offset``
       - For the single-planar API and when ``memory`` is
 	``V4L2_MEMORY_MMAP`` this is the offset of the buffer from the
@@ -151,29 +266,27 @@ struct v4l2_buffer
 	and apart of serving as parameter to the
 	:ref:`mmap() <func-mmap>` function not useful for applications.
 	See :ref:`mmap` for details
-    * -
-      - unsigned long
+    * - unsigned long
       - ``userptr``
       - For the single-planar API and when ``memory`` is
 	``V4L2_MEMORY_USERPTR`` this is a pointer to the buffer (casted to
 	unsigned long type) in virtual memory, set by the application. See
 	:ref:`userp` for details.
-    * -
-      - struct v4l2_plane
+    * - struct v4l2_plane
       - ``*planes``
       - When using the multi-planar API, contains a userspace pointer to
 	an array of struct :c:type:`v4l2_plane`. The size of
 	the array should be put in the ``length`` field of this
 	struct :c:type:`v4l2_buffer` structure.
-    * -
-      - int
+    * - int
       - ``fd``
       - For the single-plane API and when ``memory`` is
 	``V4L2_MEMORY_DMABUF`` this is the file descriptor associated with
 	a DMABUF buffer.
+    * - }
+      -
     * - __u32
       - ``length``
-      -
       - Size of the buffer (not the payload) in bytes for the
 	single-planar API. This is set by the driver based on the calls to
 	:ref:`VIDIOC_REQBUFS` and/or
@@ -183,14 +296,25 @@ struct v4l2_buffer
 	actual number of valid elements in that array.
     * - __u32
       - ``reserved2``
-      -
       - A place holder for future extensions. Drivers and applications
 	must set this to 0.
     * - __u32
-      - ``reserved``
-      -
-      - A place holder for future extensions. Drivers and applications
-	must set this to 0.
+      - ``request_fd``
+      - The file descriptor of the request to queue the buffer to. If the flag
+        ``V4L2_BUF_FLAG_REQUEST_FD`` is set, then the buffer will be
+	queued to this request. If the flag is not set, then this field will
+	be ignored.
+
+	The ``V4L2_BUF_FLAG_REQUEST_FD`` flag and this field are only used by
+	:ref:`ioctl VIDIOC_QBUF <VIDIOC_QBUF>` and ignored by other ioctls that
+	take a :c:type:`v4l2_buffer` as argument.
+
+	Applications should not set ``V4L2_BUF_FLAG_REQUEST_FD`` for any ioctls
+	other than :ref:`VIDIOC_QBUF <VIDIOC_QBUF>`.
+
+	If the device does not support requests, then ``EBADR`` will be returned.
+	If requests are supported but an invalid request file descriptor is
+	given, then ``EINVAL`` will be returned.
 
 
 
@@ -206,11 +330,10 @@ struct v4l2_plane
 .. flat-table::
     :header-rows:  0
     :stub-columns: 0
-    :widths:       1 1 1 2
+    :widths:       1 1 2
 
     * - __u32
       - ``bytesused``
-      -
       - The number of bytes occupied by data in the plane (its payload).
 	Drivers must set this field when ``type`` refers to a capture
 	stream, applications when it refers to an output stream. If the
@@ -224,40 +347,35 @@ struct v4l2_plane
 	   which may not be 0.
     * - __u32
       - ``length``
-      -
       - Size in bytes of the plane (not its payload). This is set by the
 	driver based on the calls to
 	:ref:`VIDIOC_REQBUFS` and/or
 	:ref:`VIDIOC_CREATE_BUFS`.
-    * - union
+    * - union {
       - ``m``
-      -
-      -
-    * -
-      - __u32
+    * - __u32
       - ``mem_offset``
       - When the memory type in the containing struct
 	:c:type:`v4l2_buffer` is ``V4L2_MEMORY_MMAP``, this
 	is the value that should be passed to :ref:`mmap() <func-mmap>`,
 	similar to the ``offset`` field in struct
 	:c:type:`v4l2_buffer`.
-    * -
-      - unsigned long
+    * - unsigned long
       - ``userptr``
       - When the memory type in the containing struct
 	:c:type:`v4l2_buffer` is ``V4L2_MEMORY_USERPTR``,
 	this is a userspace pointer to the memory allocated for this plane
 	by an application.
-    * -
-      - int
+    * - int
       - ``fd``
       - When the memory type in the containing struct
 	:c:type:`v4l2_buffer` is ``V4L2_MEMORY_DMABUF``,
 	this is a file descriptor associated with a DMABUF buffer, similar
 	to the ``fd`` field in struct :c:type:`v4l2_buffer`.
+    * - }
+      -
     * - __u32
       - ``data_offset``
-      -
       - Offset in bytes to video data in the plane. Drivers must set this
 	field when ``type`` refers to a capture stream, applications when
 	it refers to an output stream.
@@ -269,7 +387,6 @@ struct v4l2_plane
 	   at offset ``data_offset`` from the start of the plane.
     * - __u32
       - ``reserved[11]``
-      -
       - Reserved for future use. Should be zeroed by drivers and
 	applications.
 
@@ -282,7 +399,7 @@ enum v4l2_buf_type
 
 .. cssclass:: longtable
 
-.. tabularcolumns:: |p{7.2cm}|p{0.6cm}|p{9.7cm}|
+.. tabularcolumns:: |p{7.8cm}|p{0.6cm}|p{9.1cm}|
 
 .. flat-table::
     :header-rows:  0
@@ -330,6 +447,12 @@ enum v4l2_buf_type
       - 12
       - Buffer for Software Defined Radio (SDR) output stream, see
 	:ref:`sdr`.
+    * - ``V4L2_BUF_TYPE_META_CAPTURE``
+      - 13
+      - Buffer for metadata capture, see :ref:`metadata`.
+    * - ``V4L2_BUF_TYPE_META_OUTPUT``
+      - 14
+      - Buffer for metadata output, see :ref:`metadata`.
 
 
 
@@ -338,7 +461,11 @@ enum v4l2_buf_type
 Buffer Flags
 ============
 
-.. tabularcolumns:: |p{7.0cm}|p{2.2cm}|p{8.3cm}|
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{7.0cm}|p{2.1cm}|p{8.4cm}|
 
 .. cssclass:: longtable
 
@@ -392,6 +519,11 @@ Buffer Flags
 	streaming may continue as normal and the buffer may be reused
 	normally. Drivers set this flag when the ``VIDIOC_DQBUF`` ioctl is
 	called.
+    * .. _`V4L2-BUF-FLAG-IN-REQUEST`:
+
+      - ``V4L2_BUF_FLAG_IN_REQUEST``
+      - 0x00000080
+      - This buffer is part of a request that hasn't been queued yet.
     * .. _`V4L2-BUF-FLAG-KEYFRAME`:
 
       - ``V4L2_BUF_FLAG_KEYFRAME``
@@ -454,6 +586,19 @@ Buffer Flags
 	applications shall use this flag for output buffers if the data in
 	this buffer has not been created by the CPU but by some
 	DMA-capable unit, in which case caches have not been used.
+    * .. _`V4L2-BUF-FLAG-M2M-HOLD-CAPTURE-BUF`:
+
+      - ``V4L2_BUF_FLAG_M2M_HOLD_CAPTURE_BUF``
+      - 0x00000200
+      - Only valid if ``V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF`` is
+	set. It is typically used with stateless decoders where multiple
+	output buffers each decode to a slice of the decoded frame.
+	Applications can set this flag when queueing the output buffer
+	to prevent the driver from dequeueing the capture buffer after
+	the output buffer has been decoded (i.e. the capture buffer is
+	'held'). If the timestamp of this output buffer differs from that
+	of the previous output buffer, then that indicates the start of a
+	new frame and the previously held capture buffer is dequeued.
     * .. _`V4L2-BUF-FLAG-LAST`:
 
       - ``V4L2_BUF_FLAG_LAST``
@@ -467,6 +612,11 @@ Buffer Flags
 	the format. Any Any subsequent call to the
 	:ref:`VIDIOC_DQBUF <VIDIOC_QBUF>` ioctl will not block anymore,
 	but return an ``EPIPE`` error code.
+    * .. _`V4L2-BUF-FLAG-REQUEST-FD`:
+
+      - ``V4L2_BUF_FLAG_REQUEST_FD``
+      - 0x00800000
+      - The ``request_fd`` field contains a valid file descriptor.
     * .. _`V4L2-BUF-FLAG-TIMESTAMP-MASK`:
 
       - ``V4L2_BUF_FLAG_TIMESTAMP_MASK``
@@ -527,6 +677,9 @@ Buffer Flags
 	exposure of the frame has begun. This is only valid for the
 	``V4L2_BUF_TYPE_VIDEO_CAPTURE`` buffer type.
 
+.. raw:: latex
+
+    \normalsize
 
 
 .. c:type:: v4l2_memory
@@ -534,7 +687,7 @@ Buffer Flags
 enum v4l2_memory
 ================
 
-.. tabularcolumns:: |p{6.6cm}|p{2.2cm}|p{8.7cm}|
+.. tabularcolumns:: |p{5.0cm}|p{0.8cm}|p{11.7cm}|
 
 .. flat-table::
     :header-rows:  0
@@ -559,10 +712,10 @@ enum v4l2_memory
 Timecodes
 =========
 
-The struct :c:type:`v4l2_timecode` structure is designed to hold a
-:ref:`smpte12m` or similar timecode. (struct
-struct :c:type:`timeval` timestamps are stored in struct
-:c:type:`v4l2_buffer` field ``timestamp``.)
+The :c:type:`v4l2_buffer_timecode` structure is designed to hold a
+:ref:`smpte12m` or similar timecode.
+(struct :c:type:`timeval` timestamps are stored in the struct
+:c:type:`v4l2_buffer` ``timestamp`` field.)
 
 
 .. c:type:: v4l2_timecode
@@ -570,7 +723,7 @@ struct :c:type:`timeval` timestamps are stored in struct
 struct v4l2_timecode
 --------------------
 
-.. tabularcolumns:: |p{4.4cm}|p{4.4cm}|p{8.7cm}|
+.. tabularcolumns:: |p{1.4cm}|p{2.8cm}|p{12.3cm}|
 
 .. flat-table::
     :header-rows:  0
@@ -607,7 +760,7 @@ struct v4l2_timecode
 Timecode Types
 --------------
 
-.. tabularcolumns:: |p{6.6cm}|p{2.2cm}|p{8.7cm}|
+.. tabularcolumns:: |p{5.6cm}|p{0.8cm}|p{11.1cm}|
 
 .. flat-table::
     :header-rows:  0

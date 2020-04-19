@@ -113,7 +113,7 @@ vmxnet3_global_stats[] = {
 };
 
 
-struct rtnl_link_stats64 *
+void
 vmxnet3_get_stats64(struct net_device *netdev,
 		   struct rtnl_link_stats64 *stats)
 {
@@ -160,8 +160,6 @@ vmxnet3_get_stats64(struct net_device *netdev,
 		stats->rx_dropped += drvRxStats->drop_total;
 		stats->multicast +=  devRxStats->mcastPktsRxOK;
 	}
-
-	return stats;
 }
 
 static int
@@ -257,6 +255,16 @@ vmxnet3_get_strings(struct net_device *netdev, u32 stringset, u8 *buf)
 			buf += ETH_GSTRING_LEN;
 		}
 	}
+}
+
+netdev_features_t vmxnet3_fix_features(struct net_device *netdev,
+				       netdev_features_t features)
+{
+	/* If Rx checksum is disabled, then LRO should also be disabled */
+	if (!(features & NETIF_F_RXCSUM))
+		features &= ~NETIF_F_LRO;
+
+	return features;
 }
 
 int vmxnet3_set_features(struct net_device *netdev, netdev_features_t features)
@@ -473,22 +481,25 @@ vmxnet3_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 
 
 static int
-vmxnet3_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
+vmxnet3_get_link_ksettings(struct net_device *netdev,
+			   struct ethtool_link_ksettings *ecmd)
 {
 	struct vmxnet3_adapter *adapter = netdev_priv(netdev);
 
-	ecmd->supported = SUPPORTED_10000baseT_Full | SUPPORTED_1000baseT_Full |
-			  SUPPORTED_TP;
-	ecmd->advertising = ADVERTISED_TP;
-	ecmd->port = PORT_TP;
-	ecmd->transceiver = XCVR_INTERNAL;
+	ethtool_link_ksettings_zero_link_mode(ecmd, supported);
+	ethtool_link_ksettings_add_link_mode(ecmd, supported, 10000baseT_Full);
+	ethtool_link_ksettings_add_link_mode(ecmd, supported, 1000baseT_Full);
+	ethtool_link_ksettings_add_link_mode(ecmd, supported, TP);
+	ethtool_link_ksettings_zero_link_mode(ecmd, advertising);
+	ethtool_link_ksettings_add_link_mode(ecmd, advertising, TP);
+	ecmd->base.port = PORT_TP;
 
 	if (adapter->link_speed) {
-		ethtool_cmd_speed_set(ecmd, adapter->link_speed);
-		ecmd->duplex = DUPLEX_FULL;
+		ecmd->base.speed = adapter->link_speed;
+		ecmd->base.duplex = DUPLEX_FULL;
 	} else {
-		ethtool_cmd_speed_set(ecmd, SPEED_UNKNOWN);
-		ecmd->duplex = DUPLEX_UNKNOWN;
+		ecmd->base.speed = SPEED_UNKNOWN;
+		ecmd->base.duplex = DUPLEX_UNKNOWN;
 	}
 	return 0;
 }
@@ -544,10 +555,8 @@ vmxnet3_set_ringparam(struct net_device *netdev,
 	}
 
 	if (VMXNET3_VERSION_GE_3(adapter)) {
-		if (param->rx_mini_pending < 0 ||
-		    param->rx_mini_pending > VMXNET3_RXDATA_DESC_MAX_SIZE) {
+		if (param->rx_mini_pending > VMXNET3_RXDATA_DESC_MAX_SIZE)
 			return -EINVAL;
-		}
 	} else if (param->rx_mini_pending != 0) {
 		return -EINVAL;
 	}
@@ -599,7 +608,7 @@ vmxnet3_set_ringparam(struct net_device *netdev,
 	 * completion.
 	 */
 	while (test_and_set_bit(VMXNET3_STATE_BIT_RESETTING, &adapter->state))
-		msleep(1);
+		usleep_range(1000, 2000);
 
 	if (netif_running(netdev)) {
 		vmxnet3_quiesce_dev(adapter);
@@ -771,27 +780,6 @@ vmxnet3_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec)
 	if (!VMXNET3_VERSION_GE_3(adapter))
 		return -EOPNOTSUPP;
 
-	if (ec->rx_coalesce_usecs_irq ||
-	    ec->rx_max_coalesced_frames_irq ||
-	    ec->tx_coalesce_usecs ||
-	    ec->tx_coalesce_usecs_irq ||
-	    ec->tx_max_coalesced_frames_irq ||
-	    ec->stats_block_coalesce_usecs ||
-	    ec->use_adaptive_tx_coalesce ||
-	    ec->pkt_rate_low ||
-	    ec->rx_coalesce_usecs_low ||
-	    ec->rx_max_coalesced_frames_low ||
-	    ec->tx_coalesce_usecs_low ||
-	    ec->tx_max_coalesced_frames_low ||
-	    ec->pkt_rate_high ||
-	    ec->rx_coalesce_usecs_high ||
-	    ec->rx_max_coalesced_frames_high ||
-	    ec->tx_coalesce_usecs_high ||
-	    ec->tx_max_coalesced_frames_high ||
-	    ec->rate_sample_interval) {
-		return -EINVAL;
-	}
-
 	if ((ec->rx_coalesce_usecs == 0) &&
 	    (ec->use_adaptive_rx_coalesce == 0) &&
 	    (ec->tx_max_coalesced_frames == 0) &&
@@ -882,7 +870,9 @@ done:
 }
 
 static const struct ethtool_ops vmxnet3_ethtool_ops = {
-	.get_settings      = vmxnet3_get_settings,
+	.supported_coalesce_params = ETHTOOL_COALESCE_RX_USECS |
+				     ETHTOOL_COALESCE_MAX_FRAMES |
+				     ETHTOOL_COALESCE_USE_ADAPTIVE_RX,
 	.get_drvinfo       = vmxnet3_get_drvinfo,
 	.get_regs_len      = vmxnet3_get_regs_len,
 	.get_regs          = vmxnet3_get_regs,
@@ -902,6 +892,7 @@ static const struct ethtool_ops vmxnet3_ethtool_ops = {
 	.get_rxfh          = vmxnet3_get_rss,
 	.set_rxfh          = vmxnet3_set_rss,
 #endif
+	.get_link_ksettings = vmxnet3_get_link_ksettings,
 };
 
 void vmxnet3_set_ethtool_ops(struct net_device *netdev)
